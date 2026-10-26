@@ -1,0 +1,160 @@
+# 자동 병합 (공통 운영 방식 v1.3, dev-command에서 옮김)
+# 변경 제안이 올라오면 시험을 돌리고, 통과하면 바로 main에 병합한다.
+# 위험 등급, 등급 없음, 자동 반영 설정이나 저장 구조 파일 변경은 병합하지 않고 자동 병합 보류 표시를 붙인다.
+# 이 파일을 바꾸는 변경 제안은 GitHub 규칙상 자동으로 병합되지 않는다.
+name: 자동 병합
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: '다시 확인할 변경 제안 번호'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number || inputs.pr }}/merge
+      - name: 시험한 변경 제안 커밋 기록
+        id: head
+        run: echo "sha=$(git cat-file -p HEAD | sed -n 's/^parent //p' | tail -n 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 사이트 시험
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+            npm test
+          else
+            echo "아직 시험할 코드가 없습니다."
+          fi
+
+  merge:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 등급과 바뀐 파일을 보고 병합
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          TESTED_SHA: ${{ needs.test.outputs.sha }}
+          NEED_GRADE: 'true'
+          HOLD_PATHS: '.github/*'
+          DEPLOYS: ''
+        run: |
+          python3 - <<'PY'
+          import fnmatch, json, os, re, subprocess, sys
+          from urllib.parse import quote
+
+          REPO = os.environ["REPO"]
+          PR = os.environ["PR"]
+          TESTED = os.environ.get("TESTED_SHA", "")
+          NEED_GRADE = os.environ.get("NEED_GRADE", "true") == "true"
+          HOLD = [p for p in os.environ.get("HOLD_PATHS", "").split() if p]
+          DEPLOYS = [d.split("=", 1) for d in os.environ.get("DEPLOYS", "").split() if "=" in d]
+          LABEL = "자동 병합 보류"
+
+
+          def gh(*args, check=True):
+              r = subprocess.run(["gh", *args], capture_output=True, text=True)
+              if check and r.returncode != 0:
+                  print(r.stderr, file=sys.stderr)
+                  raise SystemExit(r.returncode)
+              return r
+
+
+          def api(path, *args, check=True):
+              return gh("api", path, *args, check=check)
+
+
+          pr = json.loads(api(f"repos/{REPO}/pulls/{PR}").stdout)
+          if pr["state"] != "open" or pr["draft"]:
+              print("열려 있지 않거나 작성 중이라 건너뜁니다.")
+              raise SystemExit(0)
+          if pr["head"]["repo"] is None or pr["head"]["repo"]["full_name"] != REPO:
+              print("다른 저장소에서 온 변경 제안이라 건너뜁니다.")
+              raise SystemExit(0)
+          if TESTED and pr["head"]["sha"] != TESTED:
+              print("시험한 뒤 새 커밋이 올라왔습니다. 새 실행이 처리합니다.")
+              raise SystemExit(0)
+
+          labels = {l["name"] for l in pr.get("labels", [])}
+          files = api(f"repos/{REPO}/pulls/{PR}/files", "--paginate", "--jq", ".[].filename").stdout.split()
+
+
+          def grade_of(body):
+              lines = (body or "").splitlines()
+              at = next((i for i, l in enumerate(lines) if "위험 등급" in l), -1)
+              if at < 0:
+                  return ""
+              seg = re.sub(r"^.*?위험 등급", "", " ".join(lines[at:at + 3]))
+              m = re.search(r"일반|주의|위험", seg)
+              return m.group(0) if m else ""
+
+
+          reasons = []
+          grade = grade_of(pr.get("body"))
+          if NEED_GRADE and not grade:
+              reasons.append("본문에서 위험 등급을 찾지 못했습니다. 본문에 위험 등급: 일반처럼 적으면 다시 확인합니다.")
+          if grade == "위험":
+              reasons.append("위험 등급입니다. Claude Code 검토 후 사장님이 병합합니다.")
+          held = sorted({f for f in files for p in HOLD if fnmatch.fnmatch(f, p)})
+          if held:
+              reasons.append("자동 반영 설정이나 저장 구조 파일이 바뀌었습니다: " + ", ".join(held[:5]))
+
+
+          def hold(text):
+              gh("label", "create", LABEL, "-R", REPO, "--color", "D93F0B",
+                 "--description", "자동 병합하지 않고 사장님 확인을 기다림", check=False)
+              if LABEL not in labels:
+                  api(f"repos/{REPO}/issues/{PR}/labels", "-f", f"labels[]={LABEL}")
+                  api(f"repos/{REPO}/issues/{PR}/comments", "-f", "body=자동 병합하지 않았습니다. " + text)
+              print("보류:", text)
+
+
+          if reasons:
+              hold(" ".join(reasons))
+              raise SystemExit(0)
+
+          if LABEL in labels:
+              api(f"repos/{REPO}/issues/{PR}/labels/{quote(LABEL)}", "-X", "DELETE", check=False)
+
+          args = ["-X", "PUT", "-f", "merge_method=merge"]
+          if TESTED:
+              args += ["-f", f"sha={TESTED}"]
+          r = api(f"repos/{REPO}/pulls/{PR}/merge", *args, check=False)
+          if r.returncode != 0:
+              labels.discard(LABEL)
+              hold("병합 중 GitHub가 거절했습니다. 다른 변경과 겹쳤을 수 있으니 Codex에 이 변경 제안 정리를 맡겨 주세요.")
+              raise SystemExit(0)
+          print(f"병합 완료: #{PR} (등급 {grade or '없음'})")
+
+          ran = set()
+          for pattern, wf in DEPLOYS:
+              if wf not in ran and any(fnmatch.fnmatch(f, pattern) for f in files):
+                  gh("workflow", "run", wf, "-R", REPO, "--ref", pr["base"]["ref"])
+                  ran.add(wf)
+                  print("배포 실행:", wf)
+          PY
