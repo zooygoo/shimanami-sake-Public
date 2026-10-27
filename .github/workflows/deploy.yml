@@ -19,22 +19,32 @@ concurrency:
 
 jobs:
   build:
-    if: hashFiles('package.json') != ''
     runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
     steps:
       - uses: actions/checkout@v4
+      - name: 사이트 코드가 있는지 확인
+        id: check
+        run: |
+          if [ -f package.json ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "아직 사이트 코드가 없어 반영을 건너뜁니다."; fi
       - uses: actions/setup-node@v4
+        if: steps.check.outputs.ok == 'true'
         with:
           node-version: '22'
       - name: 사이트 만들기
+        if: steps.check.outputs.ok == 'true'
         run: npm run build
       - uses: actions/configure-pages@v5
+        if: steps.check.outputs.ok == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.check.outputs.ok == 'true'
         with:
           path: dist
 
   deploy:
     needs: build
+    if: needs.build.outputs.ok == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
