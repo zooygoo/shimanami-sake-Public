@@ -11,6 +11,7 @@ let b,fixture;
 const seed=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async kind=>[kind,JSON.parse(await readFile(new URL(`../data/${kind}.json`,import.meta.url),'utf8'))])));
 const password='test-password-only-123';
 const expected=pbkdf2Sync(password,'test-salt',600000,32,'sha256').toString('hex');
+const connectedMock=`{const records=${JSON.stringify(seed).replaceAll('<','\\u003c')};let revision=0;window.__failSave=false;window.__writes=0;window.__failLoadAfterSave=false;window.__failNextLoad=false;window.__emptyExperiences=false;window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(failure){return {rpc(request){queueMicrotask(()=>{let result;if(request.action==='login')result=request.verifier===${JSON.stringify(expected)}?{ok:true,token:'test-only-session'}:{ok:false,error:'パスワードが正しくありません。'};else if(request.token!=='test-only-session')result={ok:false,error:'ログインし直してください。'};else if(request.action==='load'){if(window.__failNextLoad){window.__failNextLoad=false;failure(new Error('Readback failed'));return;}const content=structuredClone(records);if(window.__emptyExperiences)content.experiences=[];result={ok:true,data:content,revision};}else if(request.action==='save'){window.__fieldsLockedAtWrite=[...document.querySelectorAll('#fields input,#fields textarea,#fields select,#fields button')].every(x=>x.disabled);if(window.__failSave)result={ok:false,error:'保存に失敗しました。'};else{const list=records[request.collection],index=list.findIndex(x=>x.id===request.record.id);if(index<0)list.push(request.record);else list[index]=request.record;revision++;window.__writes++;if(window.__failLoadAfterSave)window.__failNextLoad=true;result={ok:true,revision};}}else if(request.action==='logout')result={ok:true};success(result);});}};}};}}}};}`;
 async function waitFor(expression){for(let i=0;i<200;i++){if(await b.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
 before(async()=>{
  fixture=await mkdtemp(join(tmpdir(),'sake-admin-ui-'));
@@ -34,8 +35,8 @@ test('admin preview clearly disables login and writes without a backend; both wi
  }
 });
 test('admin form uses real password derivation, handles save failure without losing input, saves and logs out',async()=>{
- const mock=`{const records=${JSON.stringify(seed).replaceAll('<','\\u003c')};let revision=0;window.__failSave=false;window.__writes=0;window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(failure){return {rpc(request){queueMicrotask(()=>{let result;if(request.action==='login')result=request.verifier===${JSON.stringify(expected)}?{ok:true,token:'test-only-session'}:{ok:false,error:'パスワードが正しくありません。'};else if(request.token!=='test-only-session')result={ok:false,error:'ログインし直してください。'};else if(request.action==='load')result={ok:true,data:structuredClone(records),revision};else if(request.action==='save'){if(window.__failSave)result={ok:false,error:'保存に失敗しました。'};else{const list=records[request.collection],index=list.findIndex(x=>x.id===request.record.id);list[index]=request.record;revision++;window.__writes++;result={ok:true,revision};}}else if(request.action==='logout')result={ok:true};success(result);});}};}};}}}};}`;
- const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:mock});
+
+ const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:connectedMock});
  await b.open(pathToFileURL(join(fixture,'connected.html')).href,390,900);
  assert.equal(await b.evaluate("document.getElementById('workspace').hidden"),true);
  await b.evaluate("document.getElementById('password').value='incorrect-password';document.getElementById('login').requestSubmit()");
@@ -43,16 +44,71 @@ test('admin form uses real password derivation, handles save failure without los
  assert.equal(await b.evaluate("document.getElementById('workspace').hidden"),true);
  await b.evaluate(`document.getElementById('password').value=${JSON.stringify(password)};document.getElementById('login').requestSubmit()`);
  await waitFor("!document.getElementById('workspace').hidden");
- await b.evaluate("window.__failSave=true;const input=document.getElementById('input-description');input.value='変更した紹介文 <script> &';input.dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()");
+ await b.evaluate("document.getElementById('record').value='3';document.getElementById('record').dispatchEvent(new Event('change'));window.__failSave=true;const input=document.getElementById('input-description');input.value='変更した紹介文 <script> &';input.dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()");
  await waitFor("document.getElementById('status').textContent.includes('保存に失敗')");
  assert.equal(await b.evaluate("document.getElementById('input-description').value"),'変更した紹介文 <script> &');
  assert.equal(await b.evaluate('window.__writes'),0);
  await b.evaluate("window.__failSave=false;document.getElementById('edit-form').requestSubmit()");
  await waitFor("document.getElementById('status').textContent.includes('保存しました')");
  assert.equal(await b.evaluate('window.__writes'),1);
- assert.equal(await b.evaluate("document.getElementById('input-description').value"),'変更した紹介文 <script> &');
+ assert.equal(await b.evaluate('window.__fieldsLockedAtWrite'),true);
+ assert.equal(await b.evaluate("document.getElementById('record').value"),'3');
+ assert.equal(await b.evaluate("document.getElementById('saved-view').getAttribute('href')"),'https://shimanami-sake-preview.woogie3.chatgpt.site/makers/omishima-winery/');
+ await b.evaluate("window.__failLoadAfterSave=true;document.getElementById('input-description').value='読込失敗でも保存された紹介文';document.getElementById('input-description').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()");
+ await waitFor("document.getElementById('status').textContent.includes('保存は完了')");
+ assert.equal(await b.evaluate('window.__writes'),2);
+ assert.equal(await b.evaluate("document.getElementById('record').value"),'3');
+ assert.equal(await b.evaluate("document.getElementById('input-description').value"),'読込失敗でも保存された紹介文');
  await b.evaluate("document.getElementById('logout').click()");
  await waitFor("document.getElementById('workspace').hidden");
  assert.equal(await b.evaluate("sessionStorage.getItem('shimanami.admin.session')"),null);
+ await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});
+});
+
+test('draft review is optional, does not write, escapes text, and keeps the selected item',async()=>{
+ const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:connectedMock});
+ await b.open(pathToFileURL(join(fixture,'connected.html')).href,390,900);
+ await b.evaluate(`document.getElementById('password').value=${JSON.stringify(password)};document.getElementById('login').requestSubmit()`);
+ await waitFor("!document.getElementById('workspace').hidden");
+ assert.equal(await b.evaluate("Boolean(document.getElementById('preview'))"),true);
+ await b.evaluate("document.getElementById('record').value='2';document.getElementById('record').dispatchEvent(new Event('change'));const input=document.getElementById('input-description');input.value='<script>window.injected=true</script> &';input.dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('preview').click()");
+ assert.equal(await b.evaluate("document.getElementById('review').open"),true);
+ assert.equal(await b.evaluate("(()=>{const r=document.getElementById('review-title').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"),true);
+ assert.equal(await b.evaluate('window.__writes'),0);
+ assert.equal(await b.evaluate("document.getElementById('review-fields').textContent.includes('<script>window.injected=true</script> &')"),true);
+ assert.equal(await b.evaluate('window.injected'),undefined);
+ assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+ if(process.env.SCREENSHOT_DIR){
+  await b.screenshot(join(process.env.SCREENSHOT_DIR,'admin-review-test-390.png'));
+  await b.send('Emulation.setDeviceMetricsOverride',{width:1366,height:900,deviceScaleFactor:1,mobile:false});
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+  await b.screenshot(join(process.env.SCREENSHOT_DIR,'admin-review-test-1366.png'));
+  await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:900,deviceScaleFactor:1,mobile:false});
+ }
+ await b.evaluate("document.getElementById('review-back').click()");
+ assert.equal(await b.evaluate("document.getElementById('record').value"),'2');
+ assert.equal(await b.evaluate("document.getElementById('input-description').value"),'<script>window.injected=true</script> &');
+ await b.evaluate("document.getElementById('preview').click();document.getElementById('review-save').click()");
+ await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+ assert.equal(await b.evaluate('window.__writes'),1);
+ assert.equal(await b.evaluate("document.getElementById('record').value"),'2');
+ await b.evaluate("document.getElementById('logout').click()");
+ await waitFor("document.getElementById('workspace').hidden");
+ await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});
+});
+
+test('an empty experience list still provides a complete new entry and can save it',async()=>{
+ const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:connectedMock});
+ await b.open(pathToFileURL(join(fixture,'connected.html')).href,390,900);
+ await b.evaluate(`window.__emptyExperiences=true;document.getElementById('password').value=${JSON.stringify(password)};document.getElementById('login').requestSubmit()`);
+ await waitFor("!document.getElementById('workspace').hidden");
+ await b.evaluate("document.querySelector('[data-section=experiences]').click()");
+ assert.equal(await b.evaluate("Boolean(document.getElementById('input-id'))"),true);
+ await b.evaluate("window.__emptyExperiences=false;document.getElementById('input-id').value='new-experience';document.getElementById('input-title').value='新しい体験';document.getElementById('edit-form').requestSubmit()");
+ await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+ assert.equal(await b.evaluate('window.__writes'),1);
+ assert.equal(await b.evaluate("document.getElementById('input-id').value"),'new-experience');
+ await b.evaluate("document.getElementById('logout').click()");
+ await waitFor("document.getElementById('workspace').hidden");
  await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});
 });
