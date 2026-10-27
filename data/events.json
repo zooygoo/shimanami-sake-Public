@@ -1,0 +1,42 @@
+[
+  {
+    "id": "autumn-festival",
+    "title": "秋の地酒まつり出店",
+    "description": "終了したイベントは一覧に残し、色を薄くして表示します。",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04",
+    "time_text": "",
+    "url": "#events",
+    "sample": true
+  },
+  {
+    "id": "island-tasting",
+    "title": "島のお酒の試飲会",
+    "description": "造り手が集まり、日本酒、ビール、ワイン、リキュールを飲み比べできます。イベントの内容をここで説明します。",
+    "start_date": "2026-11-15",
+    "end_date": "2026-11-15",
+    "time_text": "10:00〜16:00",
+    "url": "#events",
+    "sample": true
+  },
+  {
+    "id": "market",
+    "title": "マルシェ出店",
+    "description": "SHIMANAMIの酒のブースで、島のお酒を紹介します。",
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-29",
+    "time_text": "",
+    "url": "#events",
+    "sample": true
+  },
+  {
+    "id": "brewery-day",
+    "title": "醸造所見学デー",
+    "description": "普段は入れない醸造所の中を、造り手の案内で見学します。",
+    "start_date": "2026-12-12",
+    "end_date": "2026-12-12",
+    "time_text": "13:00〜15:00",
+    "url": "#events",
+    "sample": true
+  }
+]
