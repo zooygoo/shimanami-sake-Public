@@ -9,7 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {browser} from './helpers/browser.mjs';
 let b,fixture;
 const seed=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async kind=>[kind,JSON.parse(await readFile(new URL(`../data/${kind}.json`,import.meta.url),'utf8'))])));
-const password='test-password-only-123';
+const password='1234';
 const expected=pbkdf2Sync(password,'test-salt',600000,32,'sha256').toString('hex');
 const connectedMock=`{const records=${JSON.stringify(seed).replaceAll('<','\\u003c')};let revision=0;window.__failSave=false;window.__writes=0;window.__uploads=0;window.__failUpload=false;window.__failLoadAfterSave=false;window.__failNextLoad=false;window.__emptyExperiences=false;window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(failure){return {rpc(request){queueMicrotask(()=>{let result;if(request.action==='login')result=request.verifier===${JSON.stringify(expected)}?{ok:true,token:'test-only-session'}:{ok:false,error:'パスワードが正しくありません。'};else if(request.token!=='test-only-session')result={ok:false,error:'ログインし直してください。'};else if(request.action==='load'){if(window.__failNextLoad){window.__failNextLoad=false;failure(new Error('Readback failed'));return;}const content=structuredClone(records);if(window.__emptyExperiences)content.experiences=[];result={ok:true,data:content,revision};}else if(request.action==='upload'){window.__uploads++;window.__lastPhoto=request.base64;result=window.__failUpload?{ok:false,error:'写真の保存に失敗しました。'}:{ok:true,path:'uploads/'+request.collection+'/'+'a'.repeat(64)+'.jpg'};}else if(request.action==='photo'){if(window.__delayPhoto){setTimeout(()=>success({ok:true,base64:window.__lastPhoto}),120);return;}result={ok:true,base64:window.__lastPhoto};}else if(request.action==='save'){window.__fieldsLockedAtWrite=[...document.querySelectorAll('#fields input,#fields textarea,#fields select,#fields button')].every(x=>x.disabled);if(window.__failSave)result={ok:false,error:'保存に失敗しました。'};else{const list=records[request.collection],index=list.findIndex(x=>x.id===request.record.id);if(index<0)list.push(request.record);else list[index]=request.record;revision++;window.__writes++;if(window.__failLoadAfterSave)window.__failNextLoad=true;result={ok:true,revision};}}else if(request.action==='logout')result={ok:true};success(result);});}};}};}}}};}`;
 async function waitFor(expression){for(let i=0;i<200;i++){if(await b.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
@@ -34,7 +34,7 @@ test('admin preview clearly disables login and writes without a backend; both wi
   if(process.env.SCREENSHOT_DIR){await mkdir(process.env.SCREENSHOT_DIR,{recursive:true});await b.screenshot(join(process.env.SCREENSHOT_DIR,`admin-${width}.png`),true);}
  }
 });
-test('admin form uses real password derivation, handles save failure without losing input, saves and logs out',async()=>{
+test('admin form accepts a short numeric password, handles save failure without losing input, saves and logs out',async()=>{
 
  const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:connectedMock});
  await b.open(pathToFileURL(join(fixture,'connected.html')).href,390,900);
@@ -162,3 +162,4 @@ test('experience and event photo files preview before upload, survive failures a
  await b.evaluate("document.getElementById('logout').click()");await waitFor("document.getElementById('workspace').hidden");
  await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});
 });
+
