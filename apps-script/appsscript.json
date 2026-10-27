@@ -6,7 +6,7 @@
     "https://www.googleapis.com/auth/userinfo.email"
   ],
   "webapp": {
-    "access": "MYSELF",
+    "access": "ANYONE_ANONYMOUS",
     "executeAs": "USER_DEPLOYING"
   }
 }

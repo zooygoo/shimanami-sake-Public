@@ -7,7 +7,7 @@ const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8'
 const seed=Object.fromEntries(['makers','experiences','events'].map(k=>[k,JSON.parse(readFileSync(new URL(`../data/${k}.json`,import.meta.url),'utf8'))]));
 function backend() {
  const props=new Map([['SPREADSHEET_ID','test-sheet'],['OWNER_EMAIL','owner@example.test'],['PASSWORD_SALT','salt'],['PASSWORD_PEPPER','pepper']]);
- const cache=new Map(),sheets=new Map(); let email='owner@example.test',clock=Date.now();
+ const cache=new Map(),sheets=new Map(),openedSheets=[]; let email='owner@example.test',clock=Date.now();
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
  const range=(rows,r,c,n=1,w=1)=>({
   getDisplayValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>String(rows[r-1+i]?.[c-1+j]??''))),
@@ -20,7 +20,7 @@ function backend() {
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)||null,setProperty:(k,v)=>props.set(k,v)})},
  CacheService:{getScriptCache:()=>({get:k=>{const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>cache.set(k,{value:v,expires:clock+ttl*1000}),remove:k=>cache.delete(k)})},
  LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},
- SpreadsheetApp:{openById:()=>db,newRichTextValue:()=>({setText(text){this.text=text;return this;},build(){return {text:this.text};}})},
+ SpreadsheetApp:{openById:id=>{openedSheets.push(id);return db;},newRichTextValue:()=>({setText(text){this.text=text;return this;},build(){return {text:this.text};}})},
  Session:{getActiveUser:()=>({getEmail:()=>email})},
  Utilities:{getUuid:randomUUID,Charset:{UTF_8:'UTF-8'},DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,v)=>[...createHash('sha256').update(v).digest()],computeHmacSha256Signature:(v,k)=>[...createHmac('sha256',k).update(v).digest()],base64Encode:v=>Buffer.from(v).toString('base64'),formatDate:(date,tz,format)=>{const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).map(x=>[x.type,x.value]));const d=`${parts.year}-${parts.month}-${parts.day}`;return format==='yyyy-MM-dd'?d:`${d} ${parts.hour}:${parts.minute}:${parts.second}`;}},
  ContentService:{MimeType:{JSON:'json',JAVASCRIPT:'js'},createTextOutput:text=>({text,setMimeType(){return this;}})}
@@ -34,7 +34,7 @@ function backend() {
  const rpc=p=>JSON.parse(JSON.stringify(ctx.rpc(p)));
  const setup=()=>rpc({action:'setup',verifier:'a'.repeat(64)});
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
- return {ctx,props,sheets,rpc,setup,login,setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
+ return {ctx,props,sheets,openedSheets,rpc,setup,login,setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
@@ -71,4 +71,12 @@ test('login throttles repeated guesses and public responses never include secret
 
 test('manual spreadsheet edits cannot publish a javascript URL through the public snapshot',()=>{
  const b=backend(),sheet=b.sheets.get('造り手');sheet.rows[1][sheet.rows[0].indexOf('website')]='javascript:alert(1)';assert.throws(()=>b.ctx.publicData_(),/https/);
+});
+
+test('anonymous read and view requests cannot select a different spreadsheet or return private statistics',()=>{
+ const b=backend();const output=b.ctx.doGet({parameter:{action:'public',callback:'__sakeData_test',spreadsheet_id:'attacker-sheet'}});
+ assert.ok(output.text.startsWith('__sakeData_test('));assert.ok(!output.text.includes('PASSWORD_HASH'));assert.ok(!output.text.includes('received_at_jst'));
+ assert.equal(b.ctx.recordView_({action:'view',event_id:randomUUID(),page:'/',spreadsheet_id:'attacker-sheet'}).ok,true);
+ assert.ok(b.openedSheets.length>0);assert.ok(b.openedSheets.every(id=>id==='test-sheet'));
+ assert.equal(b.rpc({action:'save',token:'forged',spreadsheet_id:'attacker-sheet'}).ok,false);
 });
