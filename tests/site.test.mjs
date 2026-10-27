@@ -128,9 +128,15 @@ test('build escapes special characters, honors order, hides empty rows and copie
 test('supplied map keeps fixed maker numbers and colors even when display order changes', async () => {
   const { renderPages } = await import('../scripts/site-render.mjs');
   const ids = ['omishima-brewery','omishima-winery','omishima-limone','imabari-machinaka-bakushu','yagi-shuzobu'];
-  const colors = ['#18958D','#984362','#C49500','#D47720','#265A70'];
+  const crops = [[314,135],[245,231],[632,236],[363,794],[285,818]];
   for (const html of [home, renderPages(makers.map(m=>({...m,order:6-m.order})),experiences,events).get('index.html')]) {
-    ids.forEach((id,i)=>assert.ok(html.includes(`data-map-maker="${id}"><span class="pin" style="--pin-color:${colors[i]}${i===0||i===2||i===3?';--pin-ink:var(--ink)':''}"><span>${String(i+1).padStart(2,'0')}</span>`), id));
+    ids.forEach((id,i)=>{
+      const number = String(i+1).padStart(2,'0');
+      const row = html.match(new RegExp(`<li data-map-maker="${id}">([\\s\\S]*?)</li>`))[1];
+      assert.ok(row.includes(`class="pin" viewBox="0 0 76 100" role="img" aria-label="${number}"`),id);
+      assert.ok(row.includes(`<image href="assets/maps/shimanami-area.png" x="-${crops[i][0]}" y="-${crops[i][1]}" width="1459" height="1078" clip-path="url(#map-pin-${number})"`),id);
+      assert.doesNotMatch(row, /--pin-color|--pin-ink|<span>0[1-5]<\/span>/);
+    });
     assert.ok(html.includes('width="1459" height="1078"'));
     assert.doesNotMatch(html,/ここに地図を表示します|3段階で住所/);
   }
