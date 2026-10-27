@@ -61,7 +61,7 @@ jobs:
           TESTED_SHA: ${{ needs.test.outputs.sha }}
           NEED_GRADE: 'true'
           HOLD_PATHS: '.github/*'
-          DEPLOYS: '*=deploy.yml'
+          DEPLOYS: ''
         run: |
           python3 - <<'PY'
           import fnmatch, json, os, re, subprocess, sys

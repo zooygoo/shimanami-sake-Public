@@ -3,9 +3,8 @@
 # 자동 병합 장치가 병합한 뒤에도 이 파일을 직접 실행한다(auto-merge.yml의 DEPLOYS).
 name: 공개 사이트 반영
 
+# 지금은 저장소를 비공개로 두므로 직접 실행할 때만 동작한다. 7단계 공개 때 push 실행을 다시 켠다.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
