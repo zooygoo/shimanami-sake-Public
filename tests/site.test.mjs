@@ -12,7 +12,7 @@ const json = async path => JSON.parse(await read(path));
 let home, makers, experiences, events;
 before(async () => {
   root = await mkdtemp(join(tmpdir(),'sake-tests-'));
-  for (const p of ['scripts','data','assets','package.json']) await cp(join(source,p),join(root,p),{recursive:true});
+  for (const p of ['scripts','data','assets','apps-script','package.json']) await cp(join(source,p),join(root,p),{recursive:true});
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root });
   [home, makers, experiences, events] = await Promise.all([read('dist/index.html'), json('data/makers.json'), json('data/experiences.json'), json('data/events.json')]);
 });
@@ -36,7 +36,7 @@ test('data uses only the planned fields and asset paths', async () => {
   const keys = ['id','order','name','kind','area','sub','description','body','logo','photos','postal','address','tel','website','sns','hours','lat','lng'];
   for (const m of makers) { assert.deepEqual(Object.keys(m).sort(), keys.sort()); assert.equal(m.logo, `makers/${m.id}.png`); await read(`assets/${m.logo}`); }
   for (const x of experiences) assert.deepEqual(Object.keys(x).sort(), ['id','category','title','description','photo','price','duration','schedule','place','maker_id','booking_url','booking_label','sample'].sort());
-  for (const x of events) assert.deepEqual(Object.keys(x).sort(), ['id','title','description','start_date','end_date','time_text','url','sample'].sort());
+  for (const x of events) assert.deepEqual(Object.keys(x).sort(), ['id','title','description','start_date','end_date','time_text','url','sample','photo'].sort());
 });
 test('all mockup experiences and events are marked as samples', () => {
   assert.equal(experiences.length, 5); assert.equal(events.length, 4);
@@ -108,7 +108,7 @@ test('production CSS preserves the approved CSS except documented fit and overfl
 test('build escapes special characters, honors order, hides empty rows and copies changed data', async () => {
   const fixture = await mkdtemp(join(tmpdir(), 'sake-data-'));
   try {
-    for (const p of ['scripts', 'data', 'assets']) await cp(join(root, p), join(fixture, p), { recursive: true });
+    for (const p of ['scripts', 'data', 'assets', 'apps-script']) await cp(join(root, p), join(fixture, p), { recursive: true });
     const copy = structuredClone(makers); copy[0].name = '長い名前'.repeat(50) + '<script>"&'; copy[0].description = '説明'.repeat(200) + '<img src=x onerror=alert(1)>'; copy[0].body = copy[0].description; copy[0].order = 99; copy[0].photos = [];
     await writeFile(join(fixture, 'data/makers.json'), JSON.stringify(copy));
     const ex = structuredClone(experiences); ex[0].photo = ''; ex[0].booking_label = ''; ex[0].price = ''; ex[0].sample = false;

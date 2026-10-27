@@ -80,7 +80,7 @@ test('browser: very long names and descriptions with special characters stay ins
   const fixture=await mkdtemp(join(tmpdir(),'sake-long-'));
   let longBrowser;
   try {
-    for(const path of ['scripts','assets','data']) await cp(join(root,path),join(fixture,path),{recursive:true});
+    for(const path of ['scripts','assets','data','apps-script']) await cp(join(root,path),join(fixture,path),{recursive:true});
     const makers=JSON.parse(await readFile(join(fixture,'data/makers.json'),'utf8'));
     makers[0].name='VeryLongMakerName'.repeat(30)+'<script>"&';
     makers[0].description='長い説明'.repeat(200)+'<script>alert(1)</script>';
@@ -96,7 +96,7 @@ test('browser: very long names and descriptions with special characters stay ins
       for(const path of ['dist/index.html','dist/makers/yagi-shuzobu/index.html']) {
         await longBrowser.open(pathToFileURL(join(fixture,path)).href,width);
         assert.equal(await longBrowser.evaluate('document.documentElement.scrollWidth <= innerWidth'),true,`${width} ${path}`);
-        assert.equal(await longBrowser.evaluate("document.querySelectorAll('script').length"),path==='dist/index.html'?1:0);
+        assert.equal(await longBrowser.evaluate("document.querySelectorAll('script').length"),path==='dist/index.html'?2:1);
       }
     }
   } finally { if(longBrowser) await longBrowser.close(); await rm(fixture,{recursive:true,force:true}); }

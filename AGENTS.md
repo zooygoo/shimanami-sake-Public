@@ -18,7 +18,7 @@ SHIMANAMIの酒 공개 사이트 프로젝트입니다. 상세 계획은 docs/pl
 ## 기술 스택
 - 화면: 외부 패키지 없는 Node 만들기 스크립트(scripts/build.mjs)로 정적 HTML 생성, 화면 문구 일본어. npm 패키지를 추가하지 않는다. 필요해 보이면 PR 본문에 제안만 적는다
 - 공개: GitHub Pages, GitHub Actions 배포
-- 데이터: data 폴더 JSON. 4단계부터 Google 스프레드시트가 원본이고 Apps Script가 JSON을 갱신
+- 데이터: data 폴더 JSON은 초기 표시 기준. 관리자 연결 후 Google 스프레드시트가 원본이고 Apps Script의 공개 내용 응답으로 화면 갱신
 - 관리 화면(4단계): Apps Script 웹앱이 저장과 비밀번호 확인을 맡는다
 - 통계(6단계): 사이트 자체 조회 수 집계와 관리 화면 표시. 집계·저장 방식은 docs/plan.md에서 확정
 - 비용: 구독 외 유료 서비스 없음

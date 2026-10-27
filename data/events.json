@@ -7,7 +7,8 @@
     "end_date": "2026-10-04",
     "time_text": "",
     "url": "#events",
-    "sample": true
+    "sample": true,
+    "photo": ""
   },
   {
     "id": "island-tasting",
@@ -17,7 +18,8 @@
     "end_date": "2026-11-15",
     "time_text": "10:00〜16:00",
     "url": "#events",
-    "sample": true
+    "sample": true,
+    "photo": ""
   },
   {
     "id": "market",
@@ -27,7 +29,8 @@
     "end_date": "2026-11-29",
     "time_text": "",
     "url": "#events",
-    "sample": true
+    "sample": true,
+    "photo": ""
   },
   {
     "id": "brewery-day",
@@ -37,6 +40,7 @@
     "end_date": "2026-12-12",
     "time_text": "13:00〜15:00",
     "url": "#events",
-    "sample": true
+    "sample": true,
+    "photo": ""
   }
 ]
