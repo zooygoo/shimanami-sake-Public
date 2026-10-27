@@ -210,3 +210,10 @@ body{overflow-wrap:anywhere}
 
 /* Optional event photo requested for administrator uploads. */
 .event-photo{display:block;width:100%;max-width:320px;aspect-ratio:4/3;object-fit:cover}
+
+
+/* User-supplied map: retain the complete image and match each numbered pin. */
+.map-illustration{display:block;align-self:start;min-width:0;color:var(--blue);font-weight:700;text-decoration:none}
+.map-illustration img{display:block;width:100%;height:auto}
+.map-illustration>span{display:flex;align-items:center;min-height:44px;text-decoration:underline}
+.places .pin{background:var(--pin-color,var(--blue));color:var(--pin-ink,#fff)}

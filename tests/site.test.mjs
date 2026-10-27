@@ -24,11 +24,11 @@ test('package scripts use Node only and have no dependencies', async () => {
 });
 test('all five makers exactly match the supplied names, addresses, phones and empty fields', () => {
   assert.deepEqual(makers.map(m => [m.id, m.name, m.kind, m.area, m.sub, m.postal, m.address, m.tel, m.website]), [
-    ['yagi-shuzobu','八木酒造部','日本酒','今治','山丹正宗','794-0042','愛媛県今治市旭町3丁目3-8','0898-22-6700',''],
-    ['imabari-machinaka-bakushu','今治街中麦酒','ビール','今治','商店街ブルワリー','794-0015','愛媛県今治市常盤町3丁目4-13','0898-35-4313',''],
     ['omishima-brewery','大三島ブリュワリー','ビール','大三島','しまなみ海道の小さな地ビール醸造所','794-1304','愛媛県今治市大三島町宮浦5589','0897-72-9248',''],
     ['omishima-winery','大三島みんなのワイナリー','ワイン','大三島','','794-1304','愛媛県今治市大三島町宮浦5562','0897-72-9377','https://ohmishimawine.raku-uru.jp/'],
-    ['omishima-limone','大三島リモーネ','リキュール','大三島','','794-1404','愛媛県今治市上浦町瀬戸2342','0897-87-2131','']
+    ['omishima-limone','大三島リモーネ','リキュール','大三島','','794-1404','愛媛県今治市上浦町瀬戸2342','0897-87-2131',''],
+    ['imabari-machinaka-bakushu','今治街中麦酒','ビール','今治','商店街ブルワリー','794-0015','愛媛県今治市常盤町3丁目4-13','0898-35-4313',''],
+    ['yagi-shuzobu','八木酒造部','日本酒','今治','山丹正宗','794-0042','愛媛県今治市旭町3丁目3-8','0898-22-6700','']
   ]);
   makers.forEach((m, i) => { assert.equal(m.order, i + 1); for (const key of ['description','body','hours']) assert.equal(m[key], ''); assert.deepEqual(m.sns, []); assert.equal(m.lat, null); assert.equal(m.lng, null); });
 });
@@ -44,8 +44,8 @@ test('all mockup experiences and events are marked as samples', () => {
   for (const x of [...experiences, ...events]) { assert.ok(home.includes(x.title)); }
   assert.equal((home.match(/class="sample"/g) || []).length, 9);
 });
-test('home contains the approved hero, maker cards, map placeholder and filters', () => {
-  for (const text of ['しまなみの風土から','造り手を見る','酒蔵・醸造所見学','ペアリング','文化ガイド','お酒診断','スタンプラリー','開催予定','終了','すべて','3段階']) assert.ok(home.includes(text), text);
+test('home contains the approved hero, maker cards, supplied map and filters', () => {
+  for (const text of ['しまなみの風土から','造り手を見る','酒蔵・醸造所見学','ペアリング','文化ガイド','お酒診断','スタンプラリー','開催予定','終了','すべて','地図を大きく見る']) assert.ok(home.includes(text), text);
   assert.equal((home.match(/class="maker"/g) || []).length, 5);
   assert.equal((home.match(/class="pin"/g) || []).length, 5);
   assert.doesNotMatch(home, /class="desc"|class="switch"|view-maker|data:image|<iframe/);
@@ -109,7 +109,7 @@ test('build escapes special characters, honors order, hides empty rows and copie
   const fixture = await mkdtemp(join(tmpdir(), 'sake-data-'));
   try {
     for (const p of ['scripts', 'data', 'assets', 'apps-script']) await cp(join(root, p), join(fixture, p), { recursive: true });
-    const copy = structuredClone(makers); copy[0].name = '長い名前'.repeat(50) + '<script>"&'; copy[0].description = '説明'.repeat(200) + '<img src=x onerror=alert(1)>'; copy[0].body = copy[0].description; copy[0].order = 99; copy[0].photos = [];
+    const copy = structuredClone(makers); const target = copy.find(m => m.id === 'yagi-shuzobu'); target.name = '長い名前'.repeat(50) + '<script>"&'; target.description = '説明'.repeat(200) + '<img src=x onerror=alert(1)>'; target.body = target.description; target.order = 99; target.photos = [];
     await writeFile(join(fixture, 'data/makers.json'), JSON.stringify(copy));
     const ex = structuredClone(experiences); ex[0].photo = ''; ex[0].booking_label = ''; ex[0].price = ''; ex[0].sample = false;
     await writeFile(join(fixture, 'data/experiences.json'), JSON.stringify(ex));
@@ -122,4 +122,17 @@ test('build escapes special characters, honors order, hides empty rows and copie
     assert.doesNotMatch(first, /<dt>料金<\/dt>|class="sample"/); assert.ok(first.includes('予約サイトへ'));
     const detail = await readFile(join(fixture,'dist/makers/yagi-shuzobu/index.html'),'utf8'); assert.doesNotMatch(detail, /class="gallery"|class="d-hero"/);
   } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
+
+test('supplied map keeps fixed maker numbers and colors even when display order changes', async () => {
+  const { renderPages } = await import('../scripts/site-render.mjs');
+  const ids = ['omishima-brewery','omishima-winery','omishima-limone','imabari-machinaka-bakushu','yagi-shuzobu'];
+  const colors = ['#18958D','#984362','#C49500','#D47720','#265A70'];
+  for (const html of [home, renderPages(makers.map(m=>({...m,order:6-m.order})),experiences,events).get('index.html')]) {
+    ids.forEach((id,i)=>assert.ok(html.includes(`data-map-maker="${id}"><span class="pin" style="--pin-color:${colors[i]}${i===0||i===2||i===3?';--pin-ink:var(--ink)':''}"><span>${String(i+1).padStart(2,'0')}</span>`), id));
+    assert.ok(html.includes('width="1459" height="1078"'));
+    assert.doesNotMatch(html,/ここに地図を表示します|3段階で住所/);
+  }
+  assert.deepEqual(await readFile(join(root,'dist/assets/maps/shimanami-area.png')),await readFile(join(root,'assets/maps/shimanami-area.png')));
 });
