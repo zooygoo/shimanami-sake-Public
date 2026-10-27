@@ -24,9 +24,11 @@ export async function browser(serveRoot = process.cwd()) {
   const socket = new WebSocket(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   const pending = new Map();
+  const listeners = new Map();
   let sequence = 0;
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if(message.method) (listeners.get(message.method)||[]).forEach(fn=>fn(message.params));
     if (message.id) { const task = pending.get(message.id); pending.delete(message.id); message.error ? task.reject(new Error(JSON.stringify(message.error))) : task.resolve(message.result); }
   });
   function send(method, params = {}) {
@@ -49,7 +51,7 @@ export async function browser(serveRoot = process.cwd()) {
       let path = resolve(serveRoot, pathname.slice(base.length));
       if (!path.startsWith(serveRoot + '/')) { res.writeHead(403).end(); return; }
       if (pathname.endsWith('/')) path=join(path,'index.html');
-      res.setHeader('Content-Type', ({'.html':'text/html; charset=utf-8','.css':'text/css','.png':'image/png','.jpg':'image/jpeg'})[extname(path)] || 'application/octet-stream');
+      res.setHeader('Content-Type', ({'.html':'text/html; charset=utf-8','.css':'text/css','.mjs':'text/javascript','.png':'image/png','.jpg':'image/jpeg'})[extname(path)] || 'application/octet-stream');
       res.end(await readFile(path));
     } catch { res.writeHead(404).end(); }
   });
@@ -57,6 +59,7 @@ export async function browser(serveRoot = process.cwd()) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   return {
     send, evaluate,
+    on(method,callback){const list=listeners.get(method)||[];list.push(callback);listeners.set(method,list);},
     async open(url, width = 1366, height = 900) {
       if (url.startsWith('file:')) url=origin+base+relative(serveRoot,fileURLToPath(url));
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
