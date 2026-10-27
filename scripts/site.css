@@ -145,7 +145,6 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .foot nav{display:flex;flex-wrap:wrap;gap:12px 28px;font-size:14px;align-content:center}
 .foot nav a{text-decoration:none}
 .foot nav a:hover{text-decoration:underline}
-.foot small{grid-column:1/-1;display:grid;gap:4px;font-size:12px;line-height:1.8;color:#D7E5F3;border-top:1px solid rgba(255,255,255,.25);padding-top:20px}
 
 /* maker detail */
 .crumb{font-size:13px;color:var(--muted);padding-block:20px}

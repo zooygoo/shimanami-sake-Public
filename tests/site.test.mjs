@@ -74,10 +74,12 @@ test('winery photos are copied byte-for-byte and empty experience photos have pl
   assert.ok(winery.photos.includes('photos/winery-tanks.jpg'));
   assert.equal((home.match(/写真登録予定/g) || []).length, 2);
 });
-test('all six pages have the legal and analytics footer', async () => {
+test('all six footers keep brand and navigation and omit the three removed notices', async () => {
   for (const html of [home, ...await Promise.all(makers.map(m => read(`dist/makers/${m.id}/index.html`)))]) {
-    assert.ok(html.includes('20歳未満の飲酒は法律で禁止されています。飲酒運転は絶対におやめください。'));
-    assert.ok(html.includes('当サイトではGoogleアナリティクスを利用しています。'));
+    const footer = html.match(/<footer[\s\S]*?<\/footer>/)[0];
+    assert.ok(footer.includes('SHIMANAMIの酒'));
+    assert.ok(footer.includes('フッターメニュー'));
+    assert.doesNotMatch(footer, /運営 登録予定|お問い合わせ 登録予定|20歳未満|飲酒運転|Googleアナリティクス|<small>/);
     assert.doesNotMatch(html, /googletagmanager|gtag\(/);
   }
 });
@@ -98,7 +100,7 @@ test('production CSS preserves the approved CSS except documented fit and overfl
   const css = await read('scripts/site.css'); const built = await read('dist/site.css');
   assert.equal(css, built);
   const mockup = await readFile(join(source,'docs/mockups/site-v1.html'),'utf8');
-  const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').trim();
+  const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').replace(/^\.foot small\{[^\n]*\}\n/m,'').trim();
   assert.ok(css.startsWith(approved), 'approved CSS stays verbatim before functional additions');
   for (const token of ['--blue:#00508E','--blue-deep:#003F72','--ink:#102A43','--muted:#566B80','--line:#D5E0EA','--sea:#EAF2F8','--ended:#8A99A8','Noto Sans JP','max-width:1240px','repeat(5,minmax(0,1fr))']) assert.ok(css.includes(token), token);
   assert.doesNotMatch(css, /\.switch|box-shadow/);

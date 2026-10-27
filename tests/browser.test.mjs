@@ -19,7 +19,7 @@ for (const width of [360, 390, 1366, 1920]) test(`browser: home and all five det
     assert.equal(await b.evaluate(`(() => {const r=document.querySelector('.row5');r.scrollLeft=r.scrollWidth;return r.lastElementChild.getBoundingClientRect().right <= r.getBoundingClientRect().right + 1})()`), true);
   } else assert.ok(row.tops.every(t => t === row.tops[0]));
   const links = await b.evaluate(`[...document.querySelectorAll('.maker')].map(a=>a.href)`);
-  for (const link of links) { await b.open(link, width); assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, link); assert.equal(await b.evaluate('[...document.images].every(x=>x.complete && x.naturalWidth>0)'), true); }
+  for (const link of links) { await b.open(link, width); assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, link); await b.evaluate("Promise.all([...document.images].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)"); assert.equal(await b.evaluate('[...document.images].every(x=>x.complete && x.naturalWidth>0)'), true); }
 });
 test('browser: approved hero content fits the first viewport at 390 and 1366', async () => {
   for (const width of [390, 1366]) {
@@ -67,6 +67,8 @@ test('browser: keyboard navigation, images and required screenshot widths', asyn
       await b.open(home,width,width===390?900:768);
       await b.screenshot(join(process.env.SCREENSHOT_DIR,`home-${width}.png`));
       await b.screenshot(join(process.env.SCREENSHOT_DIR,`home-${width}-full.png`),true);
+      await b.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)');
+      await b.screenshot(join(process.env.SCREENSHOT_DIR,`footer-${width}.png`));
       await b.open(pathToFileURL(join(root,'dist/makers/omishima-winery/index.html')).href,width);
       await b.screenshot(join(process.env.SCREENSHOT_DIR,`winery-${width}.png`),true);
     }
