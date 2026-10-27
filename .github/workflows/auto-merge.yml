@@ -43,7 +43,6 @@ jobs:
       - name: 사이트 시험
         run: |
           if [ -f package.json ]; then
-            npm ci
             npm test
           else
             echo "아직 시험할 코드가 없습니다."
@@ -62,7 +61,7 @@ jobs:
           TESTED_SHA: ${{ needs.test.outputs.sha }}
           NEED_GRADE: 'true'
           HOLD_PATHS: '.github/*'
-          DEPLOYS: ''
+          DEPLOYS: '*=deploy.yml'
         run: |
           python3 - <<'PY'
           import fnmatch, json, os, re, subprocess, sys

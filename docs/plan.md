@@ -39,8 +39,8 @@
 - Cloudflare와 구독 외 유료 서비스.
 
 ## 6. 기술 구성
-- 화면: Astro로 만든 정적 사이트. 화면 문구는 일본어.
-- 공개 장소: GitHub Pages. 배포는 GitHub Actions.
+- 화면: 외부 패키지 없이 Node 내장 기능만 쓰는 만들기 스크립트(scripts/build.mjs)가 data 폴더 JSON을 읽어 dist 폴더에 정적 HTML, CSS, 이미지를 만든다. 화면 문구는 일본어. 명령은 npm run build(만들기)와 npm test(시험) 두 개이고 npm 패키지를 설치하지 않는다. Codex 작업 환경이 인터넷 없이도 만들고 시험할 수 있게 하기 위해서다.
+- 공개 장소: GitHub Pages. main에 합쳐지면 공개 사이트 반영 장치(.github/workflows/deploy.yml)가 npm run build 결과(dist)를 올린다. 이 장치는 이미 들어 있으므로 Codex는 만들기 스크립트와 package.json만 만든다. 개인 무료 계정에서 GitHub Pages는 공개 저장소에서만 쓸 수 있다.
 - 데이터: 저장소 안 data 폴더의 JSON 파일(아래 데이터 칸). 2단계는 이 파일을 직접 고친다. 4단계부터는 Google 스프레드시트가 원본이고 Apps Script가 이 JSON 파일을 GitHub에 갱신한다.
 - 관리 화면(4단계): 공개 사이트 안 숨은 주소의 화면이 Apps Script 웹앱에 저장을 요청한다. 비밀번호 확인은 Apps Script 쪽에서 한다.
 - 통계(6단계): GA4, Looker Studio.

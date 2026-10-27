@@ -16,7 +16,7 @@ SHIMANAMIの酒 공개 사이트 프로젝트입니다. 상세 계획은 docs/pl
 - 작업 1건은 기능 1개로 제한하고, docs/plan.md의 구축 단계 순서를 지킨다.
 
 ## 기술 스택
-- 화면: Astro 정적 사이트, 화면 문구 일본어
+- 화면: 외부 패키지 없는 Node 만들기 스크립트(scripts/build.mjs)로 정적 HTML 생성, 화면 문구 일본어. npm 패키지를 추가하지 않는다. 필요해 보이면 PR 본문에 제안만 적는다
 - 공개: GitHub Pages, GitHub Actions 배포
 - 데이터: data 폴더 JSON. 4단계부터 Google 스프레드시트가 원본이고 Apps Script가 JSON을 갱신
 - 관리 화면(4단계): Apps Script 웹앱이 저장과 비밀번호 확인을 맡는다
