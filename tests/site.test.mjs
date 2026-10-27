@@ -36,7 +36,7 @@ test('data uses only the planned fields and asset paths', async () => {
   const keys = ['id','order','name','kind','area','sub','description','body','logo','photos','postal','address','tel','website','sns','hours','lat','lng'];
   for (const m of makers) { assert.deepEqual(Object.keys(m).sort(), keys.sort()); assert.equal(m.logo, `makers/${m.id}.png`); await read(`assets/${m.logo}`); }
   for (const x of experiences) assert.deepEqual(Object.keys(x).sort(), ['id','category','title','description','photo','price','duration','schedule','place','maker_id','booking_url','booking_label','sample'].sort());
-  for (const x of events) assert.deepEqual(Object.keys(x).sort(), ['id','title','description','start_date','end_date','time_text','url','sample'].sort());
+  for (const x of events) assert.deepEqual(Object.keys(x).sort(), ['id','title','description','start_date','end_date','time_text','url','sample','photo'].sort());
 });
 test('all mockup experiences and events are marked as samples', () => {
   assert.equal(experiences.length, 5); assert.equal(events.length, 4);

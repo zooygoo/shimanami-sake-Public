@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,cp,readFile,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,cp,readFile,writeFile,rm,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -15,6 +15,8 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   await writeFile(join(fixture,'data/connection.json'),JSON.stringify({apps_script_url:'https://script.google.com/macros/s/test-only/exec'}));
   const state=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(fixture,`data/${k}.json`),'utf8'))])));
   state.makers[0].name='シートで変更した造り手';state.makers[0].description='<img src=x onerror="window.injected=true">';
+  const jpeg='data:image/jpeg;base64,'+(await readFile(join(fixture,'assets/photos/winery-tanks.jpg'))).toString('base64');
+  state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;
   execFileSync(process.execPath,['scripts/build.mjs'],{cwd:fixture});b=await browser(fixture);
   await b.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});
   await b.send('Fetch.enable',{patterns:[{urlPattern:'https://script.google.com/*'}]});
@@ -30,6 +32,13 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   await b.open(pathToFileURL(join(fixture,'dist/index.html')).href,390,900);
   await waitFor("document.querySelector('.maker .name').textContent==='シートで変更した造り手'");
   assert.equal(await b.evaluate('window.injected'),undefined);
+  await b.evaluate("document.querySelectorAll('main img').forEach(image=>image.loading='eager')");
+  await waitFor("document.querySelector('#exp-list img')?.naturalWidth>0&&document.querySelector('.event-photo')?.naturalWidth>0");
+  for(const width of [390,1366]){
+   await b.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+   if(process.env.SCREENSHOT_DIR){await mkdir(process.env.SCREENSHOT_DIR,{recursive:true});await b.evaluate("document.getElementById('events').scrollIntoView()");await b.screenshot(join(process.env.SCREENSHOT_DIR,`site-photo-events-test-${width}.png`));}
+  }
   await b.evaluate("document.querySelector('#ex-pair').click()");
   assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list>li')].filter(x=>getComputedStyle(x).display!=='none').length"),1);
   await delay(50);assert.equal(views.length,1);assert.equal(views[0].page,'/');

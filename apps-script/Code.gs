@@ -3,7 +3,7 @@ function definition_(kind) {
   var definitions = {
     makers:{name:'造り手',fields:['id','order','name','kind','area','sub','description','body','logo','photos','postal','address','tel','website','sns','hours','lat','lng']},
     experiences:{name:'体験',fields:['id','category','title','description','photo','price','duration','schedule','place','maker_id','booking_url','booking_label','sample']},
-    events:{name:'イベント',fields:['id','title','description','start_date','end_date','time_text','url','sample']}
+    events:{name:'イベント',fields:['id','title','description','start_date','end_date','time_text','url','sample','photo']}
   };
   if (!Object.prototype.hasOwnProperty.call(definitions,kind)) throw new Error('項目が正しくありません。');
   return definitions[kind];
@@ -21,10 +21,11 @@ function readCollection_(kind){
   if(!sheet)throw new Error('保存先のシートが見つかりません。');
   if(sheet.getLastRow()<2)return [];
   var values=sheet.getRange(1,1,sheet.getLastRow(),def.fields.length).getDisplayValues();
-  if(JSON.stringify(values[0])!==JSON.stringify(def.fields))throw new Error('保存先の列が一致しません。');
+  var expected=def.fields.slice();if(kind==='events'&&values[0][8]==='')expected[8]='';
+  if(JSON.stringify(values[0])!==JSON.stringify(expected))throw new Error('保存先の列が一致しません。');
   return values.slice(1).filter(function(row){return row[0];}).map(function(row){var record={};def.fields.forEach(function(key,i){var value=row[i];record[key]=['photos','sns'].indexOf(key)>=0?JSON.parse(value||'[]'):key==='sample'?String(value).toLowerCase()==='true':key==='order'?Number(value):['lat','lng'].indexOf(key)>=0?(value===''?null:Number(value)):value;});return record;});
 }
-function publicData_(){var data={};['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){return validate_(kind,record);});});return data;}
+function publicData_(withImages){var data={};['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){validate_(kind,record);if(withImages&&photoPath_(record.photo)){try{record.photo='data:image/jpeg;base64,'+photoContent_(record.photo);}catch(error){record.photo='';}}return record;});});return data;}
 function validate_(kind,input){
   var def=definition_(kind);
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(function(k){return def.fields.indexOf(k)<0;})||def.fields.some(function(k){return !Object.prototype.hasOwnProperty.call(input,k);}))throw new Error('入力項目が正しくありません。');
@@ -33,6 +34,7 @@ function validate_(kind,input){
   if(!(kind==='makers'?input.name:input.title).trim())throw new Error('名前またはタイトルを入力してください。');
   if(kind==='makers'&&['日本酒','ビール','ワイン','リキュール'].indexOf(input.kind)<0)throw new Error('種類を確認してください。');
   if(kind==='experiences'&&['見学','ペアリング','ガイド','診断','周遊'].indexOf(input.category)<0)throw new Error('種類を確認してください。');
+  if(input.photo&&!/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(input.photo)&&!(photoPath_(input.photo)&&input.photo.indexOf('uploads/'+kind+'/')===0))throw new Error('写真の指定が正しくありません。');
   if(kind==='events'){
     [input.start_date,input.end_date].forEach(function(value){if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||isNaN(Date.parse(value))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw new Error('日付を確認してください。');});
     if(input.end_date<input.start_date)throw new Error('終了日は開始日以降にしてください。');
@@ -54,6 +56,8 @@ function save_(request){
     }
     if(request.collection==='experiences'&&record.maker_id&&!readCollection_('makers').some(function(x){return x.id===record.maker_id;}))throw new Error('関連する造り手を確認してください。');
     var sheet=database_().getSheetByName(def.name),row=index<0?sheet.getLastRow()+1:index+2;
+    if(photoPath_(record.photo))photoContent_(record.photo);
+    if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
     // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
     sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(k){var value=record[k];return SpreadsheetApp.newRichTextValue().setText(value===null?'':typeof value==='object'?JSON.stringify(value):String(value)).build();})]);
     properties_().setProperty('REVISION',String(revision+1));
@@ -88,6 +92,8 @@ function rpc(request){
     if(request.action==='logout'){cache.remove('session:'+digest_(request.token));return {ok:true};}
     if(request.action==='load')return {ok:true,data:publicData_(),revision:Number(props.getProperty('REVISION')||0)};
     if(request.action==='save')return save_(request);
+    if(request.action==='upload')return uploadPhoto_(request);
+    if(request.action==='photo')return {ok:true,base64:photoContent_(request.path)};
     if(request.action==='stats')return statistics_();
     throw new Error('操作が正しくありません。');
   }catch(error){return {ok:false,error:error.message};}
@@ -119,12 +125,12 @@ function doGet(event){
   var params=event&&event.parameter||{};
   if(params.action==='public'){
     if(!/^__sakeData_[a-z0-9]+$/.test(params.callback||''))return ContentService.createTextOutput('{}').setMimeType(ContentService.MimeType.JSON);
-    return ContentService.createTextOutput(params.callback+'('+JSON.stringify(publicData_()).replace(/</g,'\\u003c')+');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return ContentService.createTextOutput(params.callback+'('+JSON.stringify(publicData_(true)).replace(/</g,'\\u003c')+');').setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   var props=properties_();
   if(!props.getProperty('PASSWORD_SALT'))props.setProperty('PASSWORD_SALT',uuid_());
   var owner=props.getProperty('OWNER_EMAIL'),active=Session.getActiveUser().getEmail();
-  var bootstrap={connected:!!props.getProperty('SPREADSHEET_ID'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
+  var bootstrap={connected:!!props.getProperty('SPREADSHEET_ID'),photosReady:!!props.getProperty('GITHUB_IMAGE_TOKEN'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
   var html=HtmlService.createHtmlOutputFromFile('Admin').getContent().replace('__BOOTSTRAP_JSON__',JSON.stringify(bootstrap).replace(/</g,'\\u003c'));
   return HtmlService.createHtmlOutput(html).setTitle('SHIMANAMIの酒 管理画面');
 }

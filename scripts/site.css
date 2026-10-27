@@ -207,3 +207,6 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 /* Prevent unbroken data text from widening the approved grid layout. */
 body{overflow-wrap:anywhere}
 .mini .btn{justify-self:start;margin-top:8px}
+
+/* Optional event photo requested for administrator uploads. */
+.event-photo{display:block;width:100%;max-width:320px;aspect-ratio:4/3;object-fit:cover}

@@ -24,6 +24,12 @@ export function activateFilters(){
   });
 }
 
+export function photoSource(path,prefix=''){
+ if(typeof path!=='string')return '';
+ if(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(path)&&path.length<=341359)return path;
+ return /^(?:photos|makers|brand)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(path)?prefix+'assets/'+path:'';
+}
+
 export function renderPages(makerData, experiences, eventData, connection={apps_script_url:''}){
 const makers = makerData.toSorted((a,b) => a.order - b.order);
 const events = eventData.toSorted((a,b) => a.start_date.localeCompare(b.start_date));
@@ -34,7 +40,7 @@ const categories = { 見学:'酒蔵・醸造所見学', ペアリング:'ペア�
 const address = m => `${m.postal ? `〒${m.postal} ` : ''}${m.address}`;
 const directions = m => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(m.address.replace(/^〒?\d{3}-?\d{4}\s*/, ''))}`;
 const external = (url, label, cls = '', prefix = '') => `<a${cls ? ` class="${cls}"` : ''} href="${esc(url.startsWith('#') ? prefix + url : url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
-const photo = (path, alt, prefix = '', cls = '') => `<img${cls ? ` class="${cls}"` : ''} src="${prefix}assets/${esc(path)}" alt="${esc(alt)}" loading="lazy">`;
+const photo = (path, alt, prefix = '', cls = '') => photoSource(path,prefix) ? `<img${cls ? ` class="${cls}"` : ''} src="${esc(photoSource(path,prefix))}" alt="${esc(alt)}" loading="lazy">` : '';
 const info = (label, value) => value ? `<dt>${label}</dt><dd>${esc(value)}</dd>` : '';
 const booking = (x, prefix = '') => x.booking_url ? external(x.booking_url, x.booking_label || '予約サイトへ', 'btn btn-blue btn-sm', prefix) : '';
 const navShell = (template, prefix) => template.replaceAll('ASSET', `${prefix}assets/`).replaceAll('href="#', `href="${prefix}index.html#`);
@@ -56,7 +62,7 @@ const eventFilters = filters('ev-list','イベントの状態で絞り込む',[[
 const eventRows = `<ul class="events" id="ev-list">${events.map(x=>{
  const [year,month,day]=x.start_date.split('-');
  const weekday = new Intl.DateTimeFormat('ja-JP',{weekday:'long',timeZone:'Asia/Tokyo'}).format(new Date(`${x.start_date}T00:00:00+09:00`));
- return `<li data-end-date="${esc(x.end_date)}"><div class="date"><span class="y">${year}</span><span class="md">${month}.${day}</span><span class="w">${weekday}</span></div><div class="ev"><span class="status"></span><h3>${esc(x.title)} ${sample(x)}</h3>${optional(x.description,'p')}<span class="when">日程　${dateText(x.start_date)}${x.end_date!==x.start_date?'〜'+dateText(x.end_date):''}${x.time_text?' '+esc(x.time_text):''}</span></div>${x.url ? external(x.url,'詳しく見る','btn btn-blue btn-sm ev-link') : ''}</li>`;
+ return `<li data-end-date="${esc(x.end_date)}"><div class="date"><span class="y">${year}</span><span class="md">${month}.${day}</span><span class="w">${weekday}</span></div><div class="ev"><span class="status"></span><h3>${esc(x.title)} ${sample(x)}</h3>${x.photo ? photo(x.photo,x.title,'','event-photo') : ''}${optional(x.description,'p')}<span class="when">日程　${dateText(x.start_date)}${x.end_date!==x.start_date?'〜'+dateText(x.end_date):''}${x.time_text?' '+esc(x.time_text):''}</span></div>${x.url ? external(x.url,'詳しく見る','btn btn-blue btn-sm ev-link') : ''}</li>`;
 }).join('')}</ul><p class="note">イベント名、日程、内容は表示例です。</p>`;
 const browserScript = '('+activateFilters.toString()+')();';
 const home = `<main>${hero}${section('makers','h-makers','造り手','しまなみ地域でお酒をつくる5つの事業者です。造り手を選ぶと、詳しい紹介と公式サイトを見られます。',makerCards)}${section('map','h-map','地図','登録した住所をもとに、造り手、取り扱い飲食店、体験の場所を地図に表示します。',map,'sea-band')}${section('experience','h-exp','体験','種類から探せます。予約は各体験の予約サイトで受け付けます。',experienceFilters+experienceRows)}${section('events','h-ev','イベント','開催日が過ぎたイベントには終了と表示します。',eventFilters+eventRows,'','padding-top:0')}</main>`;
