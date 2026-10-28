@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browser } from './helpers/browser.mjs';
+import { renderPages } from '../scripts/site-render.mjs';
 import vm from 'node:vm';
 import { createHmac, createHash, randomUUID } from 'node:crypto';
 const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8');
@@ -59,12 +60,11 @@ test('authenticated edits persist in Sheets and are returned by the public snaps
  const state=b.rpc({action:'load',token});assert.equal(state.data.makers[0].description,record.description);assert.equal(state.revision,1);
  const publicData=b.ctx.publicData_();assert.equal(publicData.makers[0].description,record.description);assert.equal(publicData.token,undefined);assert.equal(publicData.views,undefined);
 });
-test('maker form requests pass the real server validation and persist description and order',async()=>{
- const server=backend();server.setup();const token=server.login();
- const fixture=await mkdtemp(join(tmpdir(),'sake-maker-save-'));let client;
+async function adminPage(server,token){
+ const fixture=await mkdtemp(join(tmpdir(),'sake-admin-flow-'));let client;
  try{
   const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
-  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,photosReady:false})));
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
   client=await browser(fixture);
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding',{name:'testRpc'});
@@ -83,6 +83,13 @@ test('maker form requests pass the real server validation and persist descriptio
   await client.open(pathToFileURL(join(fixture,'index.html')).href,390,900);
   async function waitFor(expression){for(let i=0;i<200;i++){if(await client.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
   await waitFor("!document.getElementById('workspace').hidden");
+  return {client,fixture,saves,waitFor,open:()=>client.open(pathToFileURL(join(fixture,'index.html')).href,390,900),close:async()=>{await client.close();await rm(fixture,{recursive:true,force:true});}};
+ }catch(error){if(client)await client.close();await rm(fixture,{recursive:true,force:true});throw error;}
+}
+test('maker form requests pass the real server validation and persist description and order',async()=>{
+ const server=backend();server.setup();const token=server.login();
+ const {client,saves,waitFor,close}=await adminPage(server,token);
+ try{
   const index=seed.makers.findIndex(x=>x.id==='yagi-shuzobu');
   await client.evaluate(`document.getElementById('record').value=${JSON.stringify(String(index))};document.getElementById('record').dispatchEvent(new Event('change'));document.getElementById('input-description').value='紹介文 <script> & =SUM(A1)';document.getElementById('input-order').value='6';document.getElementById('edit-form').requestSubmit()`);
   await waitFor("!document.getElementById('save').disabled");
@@ -95,13 +102,86 @@ test('maker form requests pass the real server validation and persist descriptio
   await waitFor("!document.getElementById('save').disabled");
   assert.equal(saves.length,2);assert.deepEqual(saves[1].result,{ok:true,revision:2});
   assert.deepEqual(server.rpc({action:'load',token}).data.makers[index],seed.makers[index]);
- }finally{if(client)await client.close();await rm(fixture,{recursive:true,force:true});}
+ }finally{await close();}
 });
 test('stale concurrent edits and injected or invalid fields cannot overwrite data',()=>{
  const b=backend();b.setup();const token=b.login();assert.equal(b.rpc({action:'save',token,collection:'makers',record:seed.makers[0],revision:0}).ok,true);
  assert.equal(b.rpc({action:'save',token,collection:'makers',record:{...seed.makers[0],name:'stale'},revision:0}).ok,false);
  for(const record of [{...seed.events[0],end_date:'2020-01-01'},{...seed.events[0],url:'javascript:alert(1)'},{...seed.events[0],unknown:'injection'}])assert.equal(b.rpc({action:'save',token,collection:'events',record,revision:1}).ok,false);
  assert.equal(b.rpc({action:'load',token}).data.makers[0].name,seed.makers[0].name);
+});
+test('adding an experience or event with an existing ID cannot overwrite it',()=>{
+ const b=backend();b.setup();const token=b.login();
+ for(const collection of ['experiences','events']){
+  const record={...seed[collection][0],title:'重複した新規登録'};
+  const result=b.rpc({action:'save',token,collection,record,revision:0,create:true});
+  assert.equal(result.ok,false,collection);assert.match(result.error,/すでに/);
+  assert.deepEqual(b.rpc({action:'load',token}).data[collection],seed[collection]);
+  assert.equal(b.props.get('REVISION'),undefined);
+ }
+});
+for(const collection of ['experiences','events'])test(`${collection}: new entry, duplicate rejection and photo lifecycle use the real server`,async()=>{
+ const server=backend();server.setup();const token=server.login();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ const {client,saves,waitFor,open,close}=await adminPage(server,token);
+ const id='new-'+collection,title='新しい内容 <>&',description='=SUM(A1) <script>window.injected=true</script>';
+ const loaded=()=>server.rpc({action:'load',token}).data[collection];
+ const record=()=>loaded().find(x=>x.id===id);
+ const publicHome=()=>{const data=server.ctx.publicData_(true);return renderPages(data.makers,data.experiences,data.events).get('index.html');};
+ const submit=async(review=false)=>{
+  const count=saves.length;
+  await client.evaluate(review?"document.getElementById('preview').click();document.getElementById('review-save').click()":"document.getElementById('edit-form').requestSubmit()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,count+1);return saves.at(-1).result;
+ };
+ const selectPhoto=async color=>{
+  await client.evaluate(`{const canvas=document.createElement('canvas');canvas.width=32;canvas.height=24;const context=canvas.getContext('2d');context.fillStyle=${JSON.stringify(color)};context.fillRect(0,0,32,24);const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),c=>c.charCodeAt(0));const transfer=new DataTransfer();transfer.items.add(new File([bytes],'確認用の長い写真名.png',{type:'image/png'}));const input=document.getElementById('input-photo');input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));}`);
+  await waitFor("!document.getElementById('save').disabled&&!document.getElementById('photo-preview').hidden");
+ };
+ try{
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click();document.getElementById('add').click();document.getElementById('input-id').value=${JSON.stringify(seed[collection][0].id)};document.getElementById('input-title').value=${JSON.stringify(title)};document.getElementById('input-description').value=${JSON.stringify(description)};`+(collection==='events'?"document.getElementById('input-start_date').value='2099-01-01';document.getElementById('input-end_date').value='2099-01-02';":''));
+  const duplicate=await submit();assert.equal(duplicate.ok,false);assert.match(duplicate.error,/すでに/);
+  assert.deepEqual(loaded(),seed[collection]);assert.equal(server.props.get('REVISION'),undefined);
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
+  await client.evaluate(`document.getElementById('input-id').value=${JSON.stringify(id)}`);
+  await selectPhoto('#00508E');assert.equal(server.images.size,0);
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(server.images.size,0);assert.equal(await client.evaluate('window.injected'),undefined);
+  await client.evaluate("document.getElementById('review-back').click()");
+  server.setImageFailure(true);await client.evaluate("document.getElementById('edit-form').requestSubmit()");
+  await waitFor("!document.getElementById('save').disabled&&document.getElementById('status').textContent.includes('接続できません')");
+  assert.equal(saves.length,1);assert.equal(record(),undefined);
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
+  assert.equal(await client.evaluate("document.getElementById('photo-preview').hidden"),false);
+  server.setImageFailure(false);assert.equal((await submit(true)).ok,true);
+  assert.equal(record().title,title);assert.equal(record().description,description);assert.equal(record().sample,false);
+  assert.match(record().photo,new RegExp('^uploads/'+collection+'/[a-f0-9]{64}\\.jpg$'));
+  assert.equal(server.images.size,1);assert.deepEqual(loaded().slice(0,-1),seed[collection]);
+  const firstPath=record().photo,firstContent=server.images.get(firstPath).content;
+  assert.ok(publicHome().includes('data:image/jpeg;base64,'+firstContent));
+  assert.ok(publicHome().includes('新しい内容 &lt;&gt;&amp;'));
+  await waitFor("document.getElementById('photo-preview').naturalWidth===32");
+  for(const width of [390,1366]){
+   await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await client.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+  }
+  await open();await waitFor("!document.getElementById('workspace').hidden");
+  const index=loaded().findIndex(x=>x.id===id);
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click();document.getElementById('record').value=${JSON.stringify(String(index))};document.getElementById('record').dispatchEvent(new Event('change'))`);
+  await waitFor("document.getElementById('photo-preview').naturalWidth===32");
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
+  await selectPhoto('#18958D');assert.equal(server.images.size,1);
+  assert.equal((await submit()).ok,true);assert.equal(saves.at(-1).request.create,false);
+  assert.notEqual(record().photo,firstPath);assert.equal(server.images.size,2);
+  assert.ok(publicHome().includes('data:image/jpeg;base64,'+server.images.get(record().photo).content));
+  await client.evaluate("document.getElementById('photo-remove').click()");
+  assert.equal((await submit()).ok,true);assert.equal(record().photo,'');assert.equal(server.images.size,2);
+  assert.equal(server.images.get(firstPath).content,firstContent);assert.ok(!publicHome().includes('data:image/jpeg;base64,'));
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers,seed.makers);
+  const before=structuredClone(loaded());await client.evaluate("document.getElementById('logout').click()");
+  await waitFor("document.getElementById('workspace').hidden");
+  assert.equal(server.rpc({action:'save',token,collection,record:{...before.at(-1),title:'ログアウト後'},revision:3}).ok,false);
+  assert.deepEqual(JSON.parse(JSON.stringify(server.ctx.publicData_()[collection])),before);
+ }finally{await close();}
 });
 test('page views append server Japan timestamps once per event and exclude admin or arbitrary pages',()=>{
  const b=backend();const event={action:'view',page:'/',event_id:randomUUID()};

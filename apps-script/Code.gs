@@ -50,6 +50,7 @@ function save_(request){
     var revision=Number(properties_().getProperty('REVISION')||0);
     if(request.revision!==revision)throw new Error('別の画面で更新されました。再読み込みしてから編集してください。');
     var record=validate_(request.collection,request.record),def=definition_(request.collection),records=readCollection_(request.collection),index=records.findIndex(function(x){return x.id===record.id;});
+    if(request.create===true&&index>=0)throw new Error('このIDはすでに使われています。別のIDを入力してください。');
     if(request.collection==='makers'){
       if(index<0)throw new Error('登録済みの造り手を選んでください。');
       ['logo','photos','lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('写真と座標はこの画面では変更できません。');});

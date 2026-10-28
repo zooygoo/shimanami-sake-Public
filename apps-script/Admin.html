@@ -92,7 +92,7 @@ async function saveRecord(record){
  if(busy||!boot.connected)return;const collection=section;busyState(true);status('保存しています。');
  try{
   if(pendingPhoto){status('写真を保存しています。');const uploaded=await rpc({action:'upload',collection,base64:pendingPhoto.base64});record.photo=uploaded.path;}
-  const result=await rpc({action:'save',collection,record,revision});pendingPhoto=null;revision=result.revision;
+  const result=await rpc({action:'save',collection,record,revision,create:$('record').value===''});pendingPhoto=null;revision=result.revision;
   const index=data[collection].findIndex(x=>x.id===record.id);if(index<0)data[collection].push(structuredClone(record));else data[collection][index]=structuredClone(record);
   current=structuredClone(record);dirty=false;if($('review').open)$('review').close();
   try{await load(record.id);status('保存しました。サイトを開き直すと反映されます。');}

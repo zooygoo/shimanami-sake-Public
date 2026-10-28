@@ -17,3 +17,13 @@ test('experience and event photos render safely and empty event photos add no im
   assert.ok(!home.includes('src="'+photo));assert.ok(!home.includes('src="assets/'+photo));
  }
 });
+test('real and mixed content is not described as entirely made of display samples',()=>{
+ for(const mode of ['real','mixed','empty']){
+  const experiences=mode==='empty'?[]:seed.experiences.map((x,i)=>({...x,sample:mode==='mixed'&&i>0}));
+  const events=mode==='empty'?[]:seed.events.map((x,i)=>({...x,sample:mode==='mixed'&&i>0}));
+  const home=renderPages(seed.makers,experiences,events).get('index.html');
+  assert.ok(!home.includes('体験名、説明、写真は表示例です。'),mode);
+  assert.ok(!home.includes('イベント名、日程、内容は表示例です。'),mode);
+  assert.equal((home.match(/class="sample"/g)||[]).length,mode==='mixed'?7:0);
+ }
+});
