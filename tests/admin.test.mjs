@@ -14,7 +14,7 @@ const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8'
 const seed=Object.fromEntries(['makers','experiences','events'].map(k=>[k,JSON.parse(readFileSync(new URL(`../data/${k}.json`,import.meta.url),'utf8'))]));
 function backend() {
  const props=new Map([['SPREADSHEET_ID','test-sheet'],['OWNER_EMAIL','owner@example.test'],['PASSWORD_SALT','salt'],['PASSWORD_PEPPER','pepper']]);
- const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],images=new Map(); let email='owner@example.test',clock=Date.now(),imageFailure=false,imageBranch=false;
+ const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],images=new Map(); let email='owner@example.test',clock=Date.now(),imageFailure=false,imageBranch=false,lockDepth=0,checkLoginLock=false;
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
  const range=(rows,r,c,n=1,w=1)=>({
   getDisplayValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>String(rows[r-1+i]?.[c-1+j]??''))),
@@ -26,8 +26,8 @@ function backend() {
  const ctx=vm.createContext({Date:TestDate,JSON,URL,console,
  UrlFetchApp:{fetch:(url,options)=>{imageRequests.push({url,options});assert.ok(url.startsWith('https://api.github.com/repos/zooygoo/shimanami-sake-Public/'));let status=200,body={};const path=url.split('/contents/')[1]?.split('?')[0];if(imageFailure){status=403;}else if(path){if(options.method==='put'){const payload=JSON.parse(options.payload);assert.equal(payload.branch,'site-images');images.set(path,{content:payload.content,sha:'test-sha'});status=201;}else if(images.has(path)){body=images.get(path);}else status=404;}else if(url.endsWith('/git/ref/heads/site-images')&&!imageBranch)status=404;else if(url.endsWith('/git/refs')&&options.method==='post'){assert.deepEqual(JSON.parse(options.payload),{ref:'refs/heads/site-images',sha:'base-sha'});imageBranch=true;status=201;}else if(url.includes('/git/ref/heads/'))body={object:{sha:'base-sha'}};return {getResponseCode:()=>status,getContentText:()=>JSON.stringify(body)};}},
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)||null,setProperty:(k,v)=>props.set(k,v)})},
- CacheService:{getScriptCache:()=>({get:k=>{const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>cache.set(k,{value:v,expires:clock+ttl*1000}),remove:k=>cache.delete(k)})},
- LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},
+ CacheService:{getScriptCache:()=>({get:k=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be read under the shared lock');const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be updated under the shared lock');cache.set(k,{value:v,expires:clock+ttl*1000});},remove:k=>cache.delete(k)})},
+ LockService:{getScriptLock:()=>({waitLock(){lockDepth++;},releaseLock(){lockDepth--;}})},
  SpreadsheetApp:{openById:id=>{openedSheets.push(id);return db;},newRichTextValue:()=>({setText(text){this.text=text;return this;},build(){return {text:this.text};}})},
  Session:{getActiveUser:()=>({getEmail:()=>email})},
  Utilities:{getUuid:randomUUID,Charset:{UTF_8:'UTF-8'},DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,v)=>[...createHash('sha256').update(Array.isArray(v)?Buffer.from(v):v).digest()],computeHmacSha256Signature:(v,k)=>[...createHmac('sha256',k).update(v).digest()],base64Encode:v=>Buffer.from(v).toString('base64'),base64Decode:v=>[...Buffer.from(v,'base64')],formatDate:(date,tz,format)=>{const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).map(x=>[x.type,x.value]));const d=`${parts.year}-${parts.month}-${parts.day}`;return format==='yyyy-MM-dd'?d:`${d} ${parts.hour}:${parts.minute}:${parts.second}`;}},
@@ -43,7 +43,7 @@ function backend() {
  const rpc=p=>JSON.parse(JSON.stringify(ctx.rpc(p)));
  const setup=()=>rpc({action:'setup',verifier:'a'.repeat(64)});
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
- return {ctx,props,sheets,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
+ return {ctx,props,sheets,requireLoginLock:()=>{checkLoginLock=true;},lockDepth:()=>lockDepth,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
@@ -274,4 +274,32 @@ test('photo replacement and removal persist after reload and keep the original s
   assert.notEqual(paths[0],paths[1]);assert.equal(b.images.has(paths[0]),true);
   record.photo='';assert.equal(b.rpc({action:'save',token,collection,record,revision:Number(b.props.get('REVISION'))}).ok,true);assert.equal(b.rpc({action:'load',token}).data[collection][0].photo,'');assert.equal(b.ctx.publicData_(true)[collection][0].photo,'');assert.ok(paths.every(path=>b.images.has(path)));
  }
+});
+
+
+test('saving an existing item uses its real sheet row when blank rows precede it',()=>{
+ for(const collection of ['makers','experiences','events']){
+  const b=backend();b.setup();const token=b.login(),def=b.ctx.definition_(collection),sheet=b.sheets.get(def.name);
+  sheet.rows.splice(1,0,Array(def.fields.length).fill(''));
+  const before=structuredClone(sheet.rows),record={...seed[collection][1],description:'空行の後の項目を更新'};
+  assert.equal(b.rpc({action:'save',token,collection,record,revision:0}).ok,true);
+  assert.deepEqual(JSON.parse(JSON.stringify(sheet.rows[1])),before[1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(sheet.rows[2])),before[2]);
+  assert.equal(sheet.rows[3][0],record.id);
+  assert.equal(sheet.rows[3][def.fields.indexOf('description')],record.description);
+  assert.deepEqual(JSON.parse(JSON.stringify(sheet.rows.slice(4))),before.slice(4));
+  const revision=b.props.get('REVISION');
+  assert.equal(b.rpc({action:'save',token,collection,record,revision:Number(revision),create:true}).ok,false);
+  assert.equal(b.props.get('REVISION'),revision);
+ }
+});
+test('login attempts keep the shared lock through count checks and release it on success and rejection',()=>{
+ const b=backend();b.setup();b.requireLoginLock();
+ for(let i=0;i<8;i++){
+  const result=b.rpc({action:'login',verifier:'b'.repeat(64)});
+  assert.equal(result.ok,false);assert.match(result.error,/パスワードが正しくありません/);assert.equal(b.lockDepth(),0);
+ }
+ assert.match(b.rpc({action:'login',verifier:'a'.repeat(64)}).error,/しばらく待って/);
+ assert.equal(b.lockDepth(),0);b.advance(900001);
+ assert.ok(b.login());assert.equal(b.lockDepth(),0);
 });

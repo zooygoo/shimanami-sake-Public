@@ -56,7 +56,8 @@ function save_(request){
       ['logo','photos','lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('写真と座標はこの画面では変更できません。');});
     }
     if(request.collection==='experiences'&&record.maker_id&&!readCollection_('makers').some(function(x){return x.id===record.maker_id;}))throw new Error('関連する造り手を確認してください。');
-    var sheet=database_().getSheetByName(def.name),row=index<0?sheet.getLastRow()+1:index+2;
+    var sheet=database_().getSheetByName(def.name),lastRow=sheet.getLastRow();
+    var row=index<0?lastRow+1:sheet.getRange(2,1,lastRow-1,1).getDisplayValues().findIndex(function(value){return value[0]===record.id;})+2;
     if(photoPath_(record.photo))photoContent_(record.photo);
     if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
     // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
@@ -81,13 +82,16 @@ function rpc(request){
       }finally{setupLock.releaseLock();}
     }
     if(request.action==='login'){
-      var attempts=Number(cache.get('login-failures')||0);
-      if(attempts>=8)throw new Error('しばらく待ってからログインしてください。');
-      var expected=props.getProperty('PASSWORD_HASH');
-      if(!expected||typeof request.verifier!=='string'||!equal_(hash_(request.verifier),expected)){
-        cache.put('login-failures',String(attempts+1),900);throw new Error('パスワードが正しくありません。');
-      }
-      cache.remove('login-failures');var token=uuid_();cache.put('session:'+digest_(token),'1',3600);return {ok:true,token:token};
+      var loginLock=LockService.getScriptLock();loginLock.waitLock(10000);
+      try{
+        var attempts=Number(cache.get('login-failures')||0);
+        if(attempts>=8)throw new Error('しばらく待ってからログインしてください。');
+        var expected=props.getProperty('PASSWORD_HASH');
+        if(!expected||typeof request.verifier!=='string'||!equal_(hash_(request.verifier),expected)){
+          cache.put('login-failures',String(attempts+1),900);throw new Error('パスワードが正しくありません。');
+        }
+        cache.remove('login-failures');var token=uuid_();cache.put('session:'+digest_(token),'1',3600);return {ok:true,token:token};
+      }finally{loginLock.releaseLock();}
     }
     session_(request.token);
     if(request.action==='logout'){cache.remove('session:'+digest_(request.token));return {ok:true};}
