@@ -72,7 +72,20 @@ async function preparePhoto(file){
 }
 function blankRecord(){const template=Object.fromEntries(definitions[section].map(([key,,type])=>[key,type==='checkbox'?false:type==='number'?1:key==='sns'?[]:'']));if(section==='experiences'){template.category='見学';template.photo='';}return template;}
 async function load(selectedId=current?.id){const result=await rpc({action:'load'});data=result.data;revision=result.revision;showEditor(selectedId);}
-async function showStats(){const box=$('stats-content');box.replaceChildren();if(!boot.connected){box.textContent='Google接続後に閲覧数を表示します。';return;}try{const result=await rpc({action:'stats'});const table=document.createElement('table');table.className='stats';for(const [label,count] of [['今日',result.counts.today],['最近7日間',result.counts.week],['最近30日間',result.counts.month],['累計',result.counts.total],...Object.entries(result.pages)]){const row=table.insertRow();row.insertCell().textContent=label;row.insertCell().textContent=String(count);}box.append(table);}catch(error){status(error.message);}}
+async function showStats(){
+ const box=$('stats-content');box.replaceChildren();if(!boot.connected){box.textContent='Google接続後に閲覧数を表示します。';return;}
+ try{
+  const result=await rpc({action:'stats'});
+  function table(caption,rows){const element=document.createElement('table');element.className='stats';element.createCaption().textContent=caption;for(const [label,count] of rows.length?rows:[['記録なし',0]]){const row=element.insertRow(),heading=document.createElement('th');heading.scope='row';heading.textContent=label;row.append(heading);row.insertCell().textContent=String(count);}box.append(element);}
+  table('閲覧数',[['今日の閲覧数',result.counts.today],['最近7日間',result.counts.week],[result.clicks?'今月の閲覧数':'最近30日間',result.counts.month],['累計閲覧数',result.counts.total]]);
+  table('ページ別（累計）',Object.entries(result.pages));
+  if(result.clicks){
+   const labels={website:'公式サイト',directions:'経路案内'};
+   const links=Object.entries(result.links).map(([target,count])=>{const [kind,id,link,index]=target.split(':');const record=data[kind==='maker'?'makers':kind==='experience'?'experiences':'events'].find(x=>x.id===id);const label=record?.name||record?.title||target;return [label+(kind==='maker'?'（'+(link==='sns'?record?.sns[Number(index)]?.name||'SNS':labels[link]||link)+'）':''),count];});
+   table('外部リンク（予約・案内）',[['今日のクリック数',result.clicks.today],['今月のクリック数',result.clicks.month],['累計クリック数',result.clicks.total],...links]);
+  }else{const note=document.createElement('p');note.className='small';note.textContent='外部リンクの集計は接続先の更新後に利用できます。';box.append(note);}
+ }catch(error){status(error.message);}
+}
 $('login').addEventListener('submit',async event=>{event.preventDefault();if(busy)return;if(boot.needsSetup&&$('password').value!==$('confirm').value){status('確認用のパスワードが一致しません。');return;}busyState(true);status('ログインを確認しています。');try{const key=await verifier($('password').value);$('password').value='';$('confirm').value='';if(boot.needsSetup){await rpc({action:'setup',verifier:key});boot.needsSetup=false;$('confirm-field').hidden=true;}$('login-title').textContent='管理者ログイン';const result=await rpc({action:'login',verifier:key});token=result.token;sessionStorage.setItem('shimanami.admin.session',token);await load();status('');}catch(error){status(error.message);}finally{busyState(false);}});
 function editedRecord(){const record=structuredClone(current);definitions[section].forEach(([key,,type])=>{const input=$('input-'+key);record[key]=type==='photo'?current.photo||'':type==='checkbox'?input.checked:key==='sns'?[...input.querySelectorAll('.sns-row')].map(row=>({name:row.querySelector('[data-sns=name]').value,url:row.querySelector('[data-sns=url]').value})):type==='number'?Number(input.value):input.value;});return record;}
 async function saveRecord(record){

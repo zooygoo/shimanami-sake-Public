@@ -100,24 +100,45 @@ function rpc(request){
 }
 function recordView_(event){
   try{
-    if(!event||event.action!=='view'||typeof event.event_id!=='string'||!/^[0-9a-f-]{36}$/.test(event.event_id))throw new Error('記録形式が正しくありません。');
+    if(!event||['view','click'].indexOf(event.action)<0||typeof event.event_id!=='string'||!/^[0-9a-f-]{36}$/.test(event.event_id))throw new Error('記録形式が正しくありません。');
     var pages=['/'].concat(readCollection_('makers').map(function(x){return '/makers/'+x.id+'/';}));
     if(pages.indexOf(event.page)<0)throw new Error('対象ページが正しくありません。');
+    if(event.action==='click'&&externalTargets_().indexOf(event.target)<0)throw new Error('対象リンクが正しくありません。');
     var lock=LockService.getScriptLock();lock.waitLock(10000);
     try{
       var cache=CacheService.getScriptCache(),key='view:'+event.event_id;
       if(cache.get(key))return {ok:true};
       var sheet=database_().getSheetByName('閲覧記録');
       if(!sheet)throw new Error('閲覧記録シートがありません。');
-      var now=new Date();sheet.getRange(sheet.getLastRow()+1,1,1,4).setValues([[Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd HH:mm:ss'),Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd'),event.page,event.event_id]]);
+      // Cache entries can expire early; the stored event ID is the durable duplicate guard.
+      var last=sheet.getLastRow();
+      if(last>1&&sheet.getRange(2,4,last-1,1).getDisplayValues().some(function(row){return row[0]===event.event_id;}))return {ok:true};
+      var headers=sheet.getRange(1,1,1,6).getDisplayValues()[0];
+      if(JSON.stringify(headers.slice(0,4))!==JSON.stringify(['received_at_jst','date_jst','page','event_id'])||headers[4]&&headers[4]!=='action'||headers[5]&&headers[5]!=='target')throw new Error('閲覧記録の列を確認してください。');
+      if(!headers[4]||!headers[5])sheet.getRange(1,5,1,2).setValues([['action','target']]);
+      var now=new Date();sheet.getRange(last+1,1,1,6).setValues([[Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd HH:mm:ss'),Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd'),event.page,event.event_id,event.action,event.action==='click'?event.target:'']]);
       cache.put(key,'1',3600);return {ok:true};
     }finally{lock.releaseLock();}
   }catch(error){return {ok:false,error:error.message};}
 }
+function externalTargets_(){
+  var targets=[],https=function(url){return typeof url==='string'&&/^https:\/\//.test(url);};
+  readCollection_('makers').forEach(function(m){if(m.address)targets.push('maker:'+m.id+':directions');if(https(m.website))targets.push('maker:'+m.id+':website');m.sns.forEach(function(x,i){if(https(x.url))targets.push('maker:'+m.id+':sns:'+i);});});
+  readCollection_('experiences').forEach(function(x){if(https(x.booking_url))targets.push('experience:'+x.id);});
+  readCollection_('events').forEach(function(x){if(https(x.url))targets.push('event:'+x.id);});return targets;
+}
 function statistics_(){
-  var sheet=database_().getSheetByName('閲覧記録'),rows=sheet&&sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,4).getDisplayValues():[];
-  var today=Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),from30=Utilities.formatDate(new Date(Date.now()-29*86400000),'Asia/Tokyo','yyyy-MM-dd'),byPage={},counts={today:0,week:0,month:0,total:rows.length};
-  rows.forEach(function(row){if(row[1]===today)counts.today++;if(row[1]>=from7&&row[1]<=today)counts.week++;if(row[1]>=from30&&row[1]<=today)counts.month++;byPage[row[2]]=(byPage[row[2]]||0)+1;});return {ok:true,counts:counts,pages:byPage};
+  var sheet=database_().getSheetByName('閲覧記録');if(!sheet)throw new Error('閲覧記録シートがありません。');
+  var rows=sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,6).getDisplayValues():[];
+  var today=Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),fromMonth=today.slice(0,7)+'-01',byPage=Object.create(null),byLink=Object.create(null),counts={today:0,week:0,month:0,total:0},clicks={today:0,month:0,total:0};
+  rows.forEach(function(row){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(row[1])||row[1]>today)return;
+    if(row[4]&&row[4]!=='view'&&row[4]!=='click')return;
+    var click=row[4]==='click',group=click?clicks:counts;group.total++;
+    if(row[1]===today)group.today++;if(row[1]>=fromMonth)group.month++;
+    if(click)byLink[row[5]]=(byLink[row[5]]||0)+1;
+    else{if(row[1]>=from7)counts.week++;byPage[row[2]]=(byPage[row[2]]||0)+1;}
+  });return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink};
 }
 function doPost(event){var result;try{configure_();if(!event.postData||event.postData.contents.length>2048)throw new Error('Request size');result=recordView_(JSON.parse(event.postData.contents));}catch(error){result={ok:false,error:'リクエストが正しくありません。'};}return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);}
 function doGet(event){

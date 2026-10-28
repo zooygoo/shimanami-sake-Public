@@ -28,6 +28,15 @@ test('browser: approved hero content fits the first viewport at 390 and 1366', a
     assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.hero')).backgroundColor"), 'rgb(0, 80, 142)');
   }
 });
+test('browser: a failed Google connection keeps both hero buttons fully visible without changing the approved layout',async()=>{
+  for(const width of [390,1366]){
+    await b.open(home,width,width===390?900:768);
+    for(let i=0;i<100&&!await b.evaluate("Boolean(document.querySelector('main > [role=status]'))");i++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(await b.evaluate("document.querySelector('main').firstElementChild.matches('.hero')"),true);
+    assert.equal(await b.evaluate("Boolean(document.querySelector('.hero + [role=status]'))"),true);
+    assert.equal(await b.evaluate("[...document.querySelectorAll('.ctas a')].every(a=>{const r=a.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})"),true);
+  }
+});
 test('browser: experience filters withstand repeated clicks and reset on refresh', async () => {
   await b.open(home);
   for (const key of ['見学','ペアリング','ガイド','診断','周遊','all','見学','見学','all']) {

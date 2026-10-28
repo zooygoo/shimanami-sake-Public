@@ -11,7 +11,7 @@ let b,fixture;
 const seed=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async kind=>[kind,JSON.parse(await readFile(new URL(`../data/${kind}.json`,import.meta.url),'utf8'))])));
 const password='1234';
 const expected=pbkdf2Sync(password,'test-salt',600000,32,'sha256').toString('hex');
-const connectedMock=`{const records=${JSON.stringify(seed).replaceAll('<','\\u003c')};let revision=0;window.__failSave=false;window.__writes=0;window.__uploads=0;window.__failUpload=false;window.__failLoadAfterSave=false;window.__failNextLoad=false;window.__emptyExperiences=false;window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(failure){return {rpc(request){queueMicrotask(()=>{let result;if(request.action==='login')result=request.verifier===${JSON.stringify(expected)}?{ok:true,token:'test-only-session'}:{ok:false,error:'パスワードが正しくありません。'};else if(request.token!=='test-only-session')result={ok:false,error:'ログインし直してください。'};else if(request.action==='load'){if(window.__failNextLoad){window.__failNextLoad=false;failure(new Error('Readback failed'));return;}const content=structuredClone(records);if(window.__emptyExperiences)content.experiences=[];result={ok:true,data:content,revision};}else if(request.action==='upload'){window.__uploads++;window.__lastPhoto=request.base64;result=window.__failUpload?{ok:false,error:'写真の保存に失敗しました。'}:{ok:true,path:'uploads/'+request.collection+'/'+'a'.repeat(64)+'.jpg'};}else if(request.action==='photo'){if(window.__delayPhoto){setTimeout(()=>success({ok:true,base64:window.__lastPhoto}),120);return;}result={ok:true,base64:window.__lastPhoto};}else if(request.action==='save'){window.__fieldsLockedAtWrite=[...document.querySelectorAll('#fields input,#fields textarea,#fields select,#fields button')].every(x=>x.disabled);if(window.__failSave)result={ok:false,error:'保存に失敗しました。'};else{const list=records[request.collection],index=list.findIndex(x=>x.id===request.record.id);if(index<0)list.push(request.record);else list[index]=request.record;revision++;window.__writes++;if(window.__failLoadAfterSave)window.__failNextLoad=true;result={ok:true,revision};}}else if(request.action==='logout')result={ok:true};success(result);});}};}};}}}};}`;
+const connectedMock=`{const records=${JSON.stringify(seed).replaceAll('<','\\u003c')};let revision=0;window.__failSave=false;window.__writes=0;window.__uploads=0;window.__failUpload=false;window.__failLoadAfterSave=false;window.__failNextLoad=false;window.__emptyExperiences=false;window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(failure){return {rpc(request){queueMicrotask(()=>{let result;if(request.action==='login')result=request.verifier===${JSON.stringify(expected)}?{ok:true,token:'test-only-session'}:{ok:false,error:'パスワードが正しくありません。'};else if(request.token!=='test-only-session')result={ok:false,error:'ログインし直してください。'};else if(request.action==='load'){if(window.__failNextLoad){window.__failNextLoad=false;failure(new Error('Readback failed'));return;}const content=structuredClone(records);if(window.__emptyExperiences)content.experiences=[];result={ok:true,data:content,revision};}else if(request.action==='upload'){window.__uploads++;window.__lastPhoto=request.base64;result=window.__failUpload?{ok:false,error:'写真の保存に失敗しました。'}:{ok:true,path:'uploads/'+request.collection+'/'+'a'.repeat(64)+'.jpg'};}else if(request.action==='photo'){if(window.__delayPhoto){setTimeout(()=>success({ok:true,base64:window.__lastPhoto}),120);return;}result={ok:true,base64:window.__lastPhoto};}else if(request.action==='save'){window.__fieldsLockedAtWrite=[...document.querySelectorAll('#fields input,#fields textarea,#fields select,#fields button')].every(x=>x.disabled);if(window.__failSave)result={ok:false,error:'保存に失敗しました。'};else{const list=records[request.collection],index=list.findIndex(x=>x.id===request.record.id);if(index<0)list.push(request.record);else list[index]=request.record;revision++;window.__writes++;if(window.__failLoadAfterSave)window.__failNextLoad=true;result={ok:true,revision};}}else if(request.action==='stats')result={ok:true,counts:{today:2,week:4,month:5,total:10},pages:{'/':7,'/makers/omishima-winery/':3},clicks:{today:1,month:2,total:3},links:{'experience:winery-tour':2,'maker:omishima-winery:website':1}};else if(request.action==='logout')result={ok:true};success(result);});}};}};}}}};}`;
 async function waitFor(expression){for(let i=0;i<200;i++){if(await b.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
 before(async()=>{
  fixture=await mkdtemp(join(tmpdir(),'sake-admin-ui-'));
@@ -53,7 +53,7 @@ test('admin form accepts a short numeric password, handles save failure without 
  assert.equal(await b.evaluate('window.__writes'),1);
  assert.equal(await b.evaluate('window.__fieldsLockedAtWrite'),true);
  assert.equal(await b.evaluate("document.getElementById('record').value"),'3');
- assert.equal(await b.evaluate("document.getElementById('saved-view').getAttribute('href')"),'https://shimanami-sake-preview.woogie3.chatgpt.site/makers/omishima-winery/');
+ assert.equal(await b.evaluate("document.getElementById('saved-view').getAttribute('href')"),'https://shimanami-sake-preview.woogie3.chatgpt.site/makers/'+seed.makers[3].id+'/');
  await b.evaluate("window.__failLoadAfterSave=true;document.getElementById('input-description').value='読込失敗でも保存された紹介文';document.getElementById('input-description').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()");
  await waitFor("document.getElementById('status').textContent.includes('保存は完了')");
  assert.equal(await b.evaluate('window.__writes'),2);
@@ -111,6 +111,22 @@ test('an empty experience list still provides a complete new entry and can save 
  await b.evaluate("document.getElementById('logout').click()");
  await waitFor("document.getElementById('workspace').hidden");
  await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});
+});
+
+test('administrator sees calendar-month views, per-page totals and separate external clicks inside the screen',async()=>{
+ const init=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:connectedMock});
+ try{
+  await b.open(pathToFileURL(join(fixture,'connected.html')).href,390,900);
+  await b.evaluate(`document.getElementById('password').value=${JSON.stringify(password)};document.getElementById('login').requestSubmit()`);
+  await waitFor("!document.getElementById('workspace').hidden");
+  await b.evaluate("document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelectorAll('#stats-content table').length===3");
+  const text=await b.evaluate("document.getElementById('stats-content').textContent");
+  for(const label of ['今日の閲覧数','今月の閲覧数','累計閲覧数','ページ別','外部リンク','今月のクリック数','ワイナリーの醸造所を見学する'])assert.ok(text.includes(label),label);
+  assert.ok(!text.includes('最近30日間'));assert.ok(text.includes('5'));
+  for(const width of [390,1366]){await b.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);}
+  await b.evaluate("document.getElementById('logout').click()");await waitFor("document.getElementById('workspace').hidden");
+ }finally{await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier:init.identifier});}
 });
 
 

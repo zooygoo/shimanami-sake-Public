@@ -15,6 +15,7 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   await writeFile(join(fixture,'data/connection.json'),JSON.stringify({apps_script_url:'https://script.google.com/macros/s/test-only/exec'}));
   const state=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(fixture,`data/${k}.json`),'utf8'))])));
   state.makers[0].name='シートで変更した造り手';state.makers[0].description='<img src=x onerror="window.injected=true">';
+  state.experiences[0].booking_url='https://booking.example.test/reserve?source=site';state.events[0].url='https://info.example.test/event';
   const jpeg='data:image/jpeg;base64,'+(await readFile(join(fixture,'assets/photos/winery-tanks.jpg'))).toString('base64');
   state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;
   execFileSync(process.execPath,['scripts/build.mjs'],{cwd:fixture});b=await browser(fixture);
@@ -45,6 +46,18 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   await b.evaluate("document.querySelector('.maker').click()");
   await waitFor("document.querySelector('.d-id h1')?.textContent==='シートで変更した造り手'");
   for(let i=0;i<100&&views.length<2;i++)await delay(20);
-  assert.equal(views.length,2);assert.equal(views[1].page,'/makers/yagi-shuzobu/');assert.notEqual(views[0].event_id,views[1].event_id);
+  assert.equal(views.length,2);assert.equal(views[1].page,'/makers/'+state.makers[0].id+'/');assert.notEqual(views[0].event_id,views[1].event_id);
+  // Cancel navigation after the tracker observes activation; no external request is made.
+  const click=async(selector,type='click',button=0)=>b.evaluate(`document.addEventListener(${JSON.stringify(type)},e=>e.preventDefault(),{once:true});document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent(${JSON.stringify(type)},{bubbles:true,cancelable:true,button:${button}}))`);
+  await click('.d-actions [data-link-target]');
+  await waitFor('true');for(let i=0;i<100&&views.length<3;i++)await delay(20);
+  assert.equal(views[2].action,'click');assert.equal(views[2].target,'maker:'+state.makers[0].id+':directions');assert.equal(views[2].page,views[1].page);
+  await b.open(pathToFileURL(join(fixture,'dist/index.html')).href,390,900);
+  await waitFor("document.querySelector('.maker .name').textContent==='シートで変更した造り手'");
+  await click('#exp-list [data-link-target]');await click('#ev-list [data-link-target]','auxclick',1);
+  for(let i=0;i<100&&views.length<6;i++)await delay(20);
+  assert.equal(views.filter(x=>x.action==='view').length,3);
+  assert.deepEqual(views.filter(x=>x.action==='click').map(x=>x.target),['maker:'+state.makers[0].id+':directions','experience:'+state.experiences[0].id,'event:'+state.events[0].id]);
+  assert.equal(new Set(views.map(x=>x.event_id)).size,6);assert.ok(!JSON.stringify(views).includes('source=site'));
  }finally{if(b)await b.close();await rm(fixture,{recursive:true,force:true});}
 });

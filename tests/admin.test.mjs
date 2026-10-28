@@ -36,7 +36,7 @@ function backend() {
  const rpc=p=>JSON.parse(JSON.stringify(ctx.rpc(p)));
  const setup=()=>rpc({action:'setup',verifier:'a'.repeat(64)});
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
- return {ctx,props,sheets,openedSheets,imageRequests,images,rpc,setup,login,setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
+ return {ctx,props,sheets,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
@@ -65,6 +65,36 @@ test('page views append server Japan timestamps once per event and exclude admin
  assert.equal(b.sheets.get('閲覧記録').rows.length,2);assert.match(b.sheets.get('閲覧記録').rows[1][1],/^\d{4}-\d{2}-\d{2}$/);
  for(const page of ['/admin/','https://evil.test/','/unknown/','/?token=secret'])assert.equal(b.ctx.recordView_({...event,page,event_id:randomUUID()}).ok,false);
  assert.equal(b.ctx.recordView_({...event,event_id:'=IMPORTXML(...)'}).ok,false);
+});
+test('calendar-month statistics preserve legacy views and separate external clicks at Japan midnight',()=>{
+ const b=backend();b.advance(Date.parse('2026-10-31T15:00:00Z')-b.ctx.Date.now());
+ const rows=b.sheets.get('閲覧記録').rows;
+ rows.push(['2026-10-31 23:59:59','2026-10-31','/',randomUUID()]);
+ rows.push(['2026-10-01 00:00:00','2026-10-01','/',randomUUID()]);
+ const view={action:'view',page:'/',event_id:randomUUID()};assert.equal(b.ctx.recordView_(view).ok,true);
+ const click={action:'click',page:'/',target:'maker:omishima-winery:website',event_id:randomUUID()};assert.equal(b.ctx.recordView_(click).ok,true);
+ rows.push(['2026-11-02 00:00:00','2026-11-02','/',randomUUID(),'view','']);
+ b.setup();const stats=b.rpc({action:'stats',token:b.login()});
+ assert.deepEqual(stats.counts,{today:1,week:2,month:1,total:3});assert.deepEqual(stats.pages,{'/':3});
+ assert.deepEqual(stats.clicks,{today:1,month:1,total:1});assert.equal(stats.links[click.target],1);
+ assert.deepEqual(rows[0],['received_at_jst','date_jst','page','event_id','action','target']);assert.equal(rows[1].length,4);
+ assert.equal(rows[3][1],'2026-11-01');
+});
+test('events survive cache eviction without duplicates and only registered external targets can be clicked',()=>{
+ const b=backend(),view={action:'view',page:'/',event_id:randomUUID()};
+ assert.equal(b.ctx.recordView_(view).ok,true);b.clearCache();assert.equal(b.ctx.recordView_(view).ok,true);assert.equal(b.sheets.get('閲覧記録').rows.length,2);
+ const make=target=>({action:'click',page:'/',target,event_id:randomUUID()});
+ for(const target of ['experience:winery-tour','event:island-tasting','maker:unknown:website','https://evil.test/?private=x','__proto__'])assert.equal(b.ctx.recordView_(make(target)).ok,false);
+ const click=make('maker:omishima-winery:website');assert.equal(b.ctx.recordView_(click).ok,true);b.clearCache();assert.equal(b.ctx.recordView_(click).ok,true);assert.equal(b.sheets.get('閲覧記録').rows.length,3);
+ assert.equal(b.ctx.recordView_({...make('maker:omishima-winery:website'),page:'/admin/'}).ok,false);
+});
+test('registered bookings and information links record target IDs without storing their URLs',()=>{
+ const b=backend();b.setup();const token=b.login();
+ for(const [collection,record] of [['experiences',{...seed.experiences[0],booking_url:'https://booking.example.test/reserve?source=site'}],['events',{...seed.events[0],url:'https://info.example.test/event?source=site'}]]){
+  assert.equal(b.rpc({action:'save',token,collection,record,revision:Number(b.props.get('REVISION')||0)}).ok,true);
+  const action={action:'click',page:'/',target:(collection==='experiences'?'experience:':'event:')+record.id,event_id:randomUUID()};assert.equal(b.ctx.recordView_(action).ok,true);
+ }
+ assert.ok(!JSON.stringify(b.sheets.get('閲覧記録').rows).includes('source=site'));
 });
 test('login throttles repeated guesses and public responses never include secrets',()=>{
  const b=backend();b.setup();for(let i=0;i<8;i++)b.rpc({action:'login',verifier:'wrong'});assert.equal(b.rpc({action:'login',verifier:'a'.repeat(64)}).ok,false);
@@ -106,4 +136,18 @@ test('the legacy event sheet gains only the trailing photo header when an authen
  b.setup();const token=b.login();const loaded=b.rpc({action:'load',token});assert.equal(loaded.ok,true);assert.equal(loaded.data.events[0].photo,'');
  const before=structuredClone(sheet.rows);assert.equal(b.rpc({action:'save',collection:'events',record:{...seed.events[0],photo:''},revision:0,token}).ok,true);
  assert.equal(sheet.rows[0].at(-1),'photo');assert.equal(JSON.stringify(sheet.rows.map(row=>row.slice(0,8).map(String))),JSON.stringify(before.map(row=>row.map(String))));assert.equal(b.rpc({action:'load',token}).ok,true);
+});
+test('photo replacement and removal persist after reload and keep the original stored images',()=>{
+ const b=backend();b.setup();const token=b.login();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ for(const collection of ['experiences','events']){
+  const photos=[224,225].map(marker=>Buffer.from([255,216,255,marker,0,0,255,217]).toString('base64'));
+  const paths=[];let record={...seed[collection][0]};
+  for(const base64 of photos){
+   const upload=b.rpc({action:'upload',token,collection,base64});assert.equal(upload.ok,true);paths.push(upload.path);record.photo=upload.path;
+   assert.equal(b.rpc({action:'save',token,collection,record,revision:Number(b.props.get('REVISION')||0)}).ok,true);
+   assert.equal(b.rpc({action:'load',token}).data[collection][0].photo,upload.path);assert.equal(b.ctx.publicData_(true)[collection][0].photo,'data:image/jpeg;base64,'+base64);
+  }
+  assert.notEqual(paths[0],paths[1]);assert.equal(b.images.has(paths[0]),true);
+  record.photo='';assert.equal(b.rpc({action:'save',token,collection,record,revision:Number(b.props.get('REVISION'))}).ok,true);assert.equal(b.rpc({action:'load',token}).data[collection][0].photo,'');assert.equal(b.ctx.publicData_(true)[collection][0].photo,'');assert.ok(paths.every(path=>b.images.has(path)));
+ }
 });

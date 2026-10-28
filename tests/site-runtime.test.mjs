@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {sendPageView,validEndpoint} from '../scripts/site-runtime.mjs';
+import {sendPageView,sendLinkClick,validEndpoint} from '../scripts/site-runtime.mjs';
 const endpoint='https://script.google.com/macros/s/test-deployment/exec';
 test('view sender is disabled without a valid Google endpoint and rejects admin or arbitrary paths',()=>{
  const calls=[];const services={crypto:{randomUUID},navigator:{sendBeacon:(...args)=>calls.push(args)}};
@@ -15,4 +15,11 @@ test('view beacon sends only event ID and canonical page, without visitor identi
 test('beacon queue failure uses a single credential-free keepalive fallback',()=>{
  let request;sendPageView(endpoint,'/',{crypto:{randomUUID},navigator:{sendBeacon:()=>false},fetch:(url,options)=>{request={url,options};return Promise.resolve();}});
  assert.equal(request.url,endpoint);assert.equal(request.options.credentials,'omit');assert.equal(request.options.mode,'no-cors');assert.equal(request.options.keepalive,true);
+});
+test('external clicks send only the canonical target and page; unknown targets never send',async()=>{
+ const calls=[],services={crypto:{randomUUID},navigator:{sendBeacon:(url,body)=>{calls.push({url,body});return true;}}};
+ assert.equal(sendLinkClick(endpoint,'/','experience:winery-tour',services),true);
+ const payload=JSON.parse(await calls[0].body.text());assert.deepEqual(Object.keys(payload).sort(),['action','event_id','page','target']);assert.equal(payload.action,'click');assert.equal(payload.target,'experience:winery-tour');
+ for(const target of ['https://example.test/?private=x','maker:unknown','event:x?query=secret','__proto__'])assert.equal(sendLinkClick(endpoint,'/',target,services),false);
+ assert.equal(sendLinkClick(endpoint,'/admin/','event:market',services),false);assert.equal(calls.length,1);
 });

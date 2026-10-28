@@ -1,8 +1,15 @@
 import {renderPages,activateFilters} from './site-render.mjs';
 export function validEndpoint(url){return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url);}
 export function sendPageView(endpoint,page,services=globalThis){
+  return sendEvent(endpoint,page,{action:'view'},services);
+}
+export function sendLinkClick(endpoint,page,target,services=globalThis){
+  if(typeof target!=='string'||!/^(?:(?:experience|event):[a-z][a-z0-9-]{0,79}|maker:[a-z][a-z0-9-]{0,79}:(?:website|directions|sns:\d+))$/.test(target))return false;
+  return sendEvent(endpoint,page,{action:'click',target},services);
+}
+function sendEvent(endpoint,page,event,services){
   if(!validEndpoint(endpoint)||!/^\/(?:makers\/[a-z][a-z0-9-]*\/)?$/.test(page))return false;
-  const payload=JSON.stringify({action:'view',page,event_id:services.crypto.randomUUID()});
+  const payload=JSON.stringify({...event,page,event_id:services.crypto.randomUUID()});
   const body=new Blob([payload],{type:'text/plain;charset=UTF-8'});
   if(services.navigator?.sendBeacon?.(endpoint,body))return true;
   services.fetch(endpoint,{method:'POST',body,mode:'no-cors',credentials:'omit',keepalive:true}).catch(()=>{});
@@ -25,6 +32,12 @@ if(typeof document!=='undefined'){
  const endpoint=script?.dataset.endpoint,pagePath=script?.dataset.page;
  if(validEndpoint(endpoint)&&!location.pathname.includes('/admin/')){
    sendPageView(endpoint,pagePath);
+   const trackLink=event=>{
+     if(event.defaultPrevented||event.type==='click'&&event.button!==0||event.type==='auxclick'&&event.button!==1)return;
+     const link=event.target.closest?.('a[data-link-target]');
+     if(link?.protocol==='https:')sendLinkClick(endpoint,pagePath,link.dataset.linkTarget);
+   };
+   document.addEventListener('click',trackLink);document.addEventListener('auxclick',trackLink);
    loadPublicData(endpoint).then(data=>{
      const path=pagePath==='/'?'index.html':pagePath.slice(1)+'index.html';
      const html=renderPages(data.makers,data.experiences,data.events,{apps_script_url:endpoint}).get(path);
@@ -34,7 +47,7 @@ if(typeof document!=='undefined'){
      document.title=updated.title;activateFilters();
      const target=location.hash&&document.getElementById(location.hash.slice(1));if(target)target.scrollIntoView();
    }).catch(()=>{
-     const notice=document.createElement('p');notice.className='wrap note';notice.role='status';notice.textContent='最新情報を取得できませんでした。再読み込みしてください。';document.querySelector('main').prepend(notice);
+     const notice=document.createElement('p');notice.className='wrap note';notice.role='status';notice.textContent='最新情報を取得できませんでした。再読み込みしてください。';const main=document.querySelector('main'),hero=main.querySelector('.hero');if(hero)hero.after(notice);else main.prepend(notice);
    });
  }
 }
