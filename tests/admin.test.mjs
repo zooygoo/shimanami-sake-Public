@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { browser } from './helpers/browser.mjs';
 import vm from 'node:vm';
 import { createHmac, createHash, randomUUID } from 'node:crypto';
 const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8');
@@ -52,6 +58,44 @@ test('authenticated edits persist in Sheets and are returned by the public snaps
  assert.equal(b.rpc({action:'save',token,collection:'makers',record,revision:0}).ok,true);
  const state=b.rpc({action:'load',token});assert.equal(state.data.makers[0].description,record.description);assert.equal(state.revision,1);
  const publicData=b.ctx.publicData_();assert.equal(publicData.makers[0].description,record.description);assert.equal(publicData.token,undefined);assert.equal(publicData.views,undefined);
+});
+test('maker form requests pass the real server validation and persist description and order',async()=>{
+ const server=backend();server.setup();const token=server.login();
+ const fixture=await mkdtemp(join(tmpdir(),'sake-maker-save-'));let client;
+ try{
+  const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,photosReady:false})));
+  client=await browser(fixture);
+  await client.send('Runtime.enable');
+  await client.send('Runtime.addBinding',{name:'testRpc'});
+  const saves=[];
+  client.on('Runtime.bindingCalled',async event=>{
+   if(event.name!=='testRpc')return;
+   const {id,request}=JSON.parse(event.payload),result=server.rpc(request);
+   if(request.action==='save')saves.push({request,result});
+   await client.evaluate(`window.testReplies.get(${id})(${JSON.stringify(result)});window.testReplies.delete(${id})`);
+  });
+  await client.send('Page.addScriptToEvaluateOnNewDocument',{source:`
+   sessionStorage.setItem('shimanami.admin.session',${JSON.stringify(token)});
+   window.testReplies=new Map();let sequence=0;
+   window.google={script:{run:{withSuccessHandler(success){return {withFailureHandler(){return {rpc(request){const id=++sequence;window.testReplies.set(id,success);window.testRpc(JSON.stringify({id,request}));}};}};}}}};
+  `});
+  await client.open(pathToFileURL(join(fixture,'index.html')).href,390,900);
+  async function waitFor(expression){for(let i=0;i<200;i++){if(await client.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
+  await waitFor("!document.getElementById('workspace').hidden");
+  const index=seed.makers.findIndex(x=>x.id==='yagi-shuzobu');
+  await client.evaluate(`document.getElementById('record').value=${JSON.stringify(String(index))};document.getElementById('record').dispatchEvent(new Event('change'));document.getElementById('input-description').value='紹介文 <script> & =SUM(A1)';document.getElementById('input-order').value='6';document.getElementById('edit-form').requestSubmit()`);
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,1);assert.deepEqual(saves[0].result,{ok:true,revision:1});
+  assert.match(await client.evaluate("document.getElementById('status').textContent"),/保存しました/);
+  const saved=server.rpc({action:'load',token}).data.makers[index];
+  assert.deepEqual(saved,{...seed.makers[index],description:'紹介文 <script> & =SUM(A1)',order:6});
+  assert.equal(server.ctx.publicData_().makers[index].description,saved.description);
+  await client.evaluate("document.getElementById('input-description').value='';document.getElementById('input-order').value='5';document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,2);assert.deepEqual(saves[1].result,{ok:true,revision:2});
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers[index],seed.makers[index]);
+ }finally{if(client)await client.close();await rm(fixture,{recursive:true,force:true});}
 });
 test('stale concurrent edits and injected or invalid fields cannot overwrite data',()=>{
  const b=backend();b.setup();const token=b.login();assert.equal(b.rpc({action:'save',token,collection:'makers',record:seed.makers[0],revision:0}).ok,true);
