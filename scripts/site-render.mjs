@@ -61,7 +61,7 @@ const mapPin = m => {
 };
 const map = `<div class="map-grid"><a class="map-illustration" href="assets/maps/shimanami-area.png" target="_blank" rel="noopener noreferrer"><img src="assets/maps/shimanami-area.png" width="1459" height="1078" alt="しまなみ海道周辺の造り手の位置。01 大三島ブリュワリー、02 大三島みんなのワイナリー、03 大三島リモーネ、04 今治街中麦酒、05 八木酒造部。" loading="lazy"><span>地図を大きく見る</span></a><ol class="places">${makers.map(m=>`<li data-map-maker="${esc(m.id)}">${mapPin(m)}<b>${esc(m.name)}</b><span class="p-kind">${esc(m.kind)}　${esc(m.area)}</span>${m.address ? `<span class="p-addr"><em>住所</em>${esc(address(m))}</span>` : ''}${m.tel ? `<span class="p-addr"><em>電話</em>${esc(m.tel)}</span>` : ''}${m.address ? external(directions(m),'経路を見る','','','maker:'+m.id+':directions') : ''}</li>`).join('')}</ol></div>`;
 const experienceFilters = filters('exp-list','体験の種類で絞り込む',[['ex-all','all','すべて'], ...Object.entries(categories).map(([key,label],i)=>[['ex-tour','ex-pair','ex-guide','ex-diag','ex-stamp'][i],key,label])]);
-const experienceRows = `<ul class="exp-list" id="exp-list">${experiences.map(x=>`<li data-k="${esc(x.category)}"><div class="e-photo">${x.photo ? photo(x.photo,x.title) : '写真登録予定'}</div><div class="e-main"><span class="e-kind">${esc(categories[x.category])} ${sample(x)}</span><h3 class="e-title">${esc(x.title)}</h3>${optional(x.description,'p','e-desc')}</div><div class="e-side"><dl>${info(x.category==='周遊'?'参加費':'料金',x.price)}${info('所要時間',x.duration)}${info(x.category==='周遊'?'期間':'開催',x.schedule)}${info('場所',x.place)}</dl>${booking(x)}</div></li>`).join('')}</ul><p class="note">体験名、説明、写真は表示例です。予約先は登録予定です。</p>`;
+const experienceRows = `<ul class="exp-list" id="exp-list">${experiences.map(x=>`<li data-k="${esc(x.category)}"><div class="e-photo">${x.photo ? photo(x.photo,x.title) : '写真登録予定'}</div><div class="e-main"><span class="e-kind">${esc(categories[x.category])} ${sample(x)}</span><h3 class="e-title">${esc(x.title)}</h3>${optional(x.description,'p','e-desc')}${booking(x)}</div></li>`).join('')}</ul><p class="note">体験名、説明、写真は表示例です。予約先は登録予定です。</p>`;
 const dateText = date => new Intl.DateTimeFormat('ja-JP',{year:'numeric',month:'long',day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date(`${date}T00:00:00+09:00`));
 const eventFilters = filters('ev-list','イベントの状態で絞り込む',[['ev-up','開催予定','開催予定'],['ev-end','終了','終了'],['ev-all','all','すべて']]);
 const eventRows = `<ul class="events" id="ev-list">${events.map(x=>{
@@ -80,4 +80,3 @@ for (const m of makers) {
 }
 return pages;
 }
-

@@ -100,7 +100,7 @@ test('production CSS preserves the approved CSS except documented fit and overfl
   const css = await read('scripts/site.css'); const built = await read('dist/site.css');
   assert.equal(css, built);
   const mockup = await readFile(join(source,'docs/mockups/site-v1.html'),'utf8');
-  const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').replace(/^\.foot small\{[^\n]*\}\n/m,'').trim();
+  const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').replace(/^\.foot small\{[^\n]*\}\n/m,'').trim().replace('grid-template-columns:320px minmax(0,1fr) 220px','grid-template-columns:320px minmax(0,1fr)').split('\n').filter(line=>!line.includes('.e-side')).join('\n').replace('.e-desc{','.e-main > .btn{justify-self:start;margin-top:8px}\n.e-desc{');
   assert.ok(css.startsWith(approved), 'approved CSS stays verbatim before functional additions');
   for (const token of ['--blue:#00508E','--blue-deep:#003F72','--ink:#102A43','--muted:#566B80','--line:#D5E0EA','--sea:#EAF2F8','--ended:#8A99A8','Noto Sans JP','max-width:1240px','repeat(5,minmax(0,1fr))']) assert.ok(css.includes(token), token);
   assert.doesNotMatch(css, /\.switch|box-shadow/);
@@ -141,4 +141,12 @@ test('supplied map keeps fixed maker numbers and colors even when display order 
     assert.doesNotMatch(html,/ここに地図を表示します|3段階で住所/);
   }
   assert.deepEqual(await readFile(join(root,'dist/assets/maps/shimanami-area.png')),await readFile(join(root,'assets/maps/shimanami-area.png')));
+});
+
+test('experiences show booking below description without a side information table', () => {
+  const list = home.match(/<ul class="exp-list"[\s\S]*?<\/ul>/)[0];
+  assert.doesNotMatch(list, /class="e-side"|<dl>|<dt>/);
+  for (const row of list.matchAll(/<li [\s\S]*?<\/li>/g)) {
+    assert.match(row[0], /class="e-main">[\s\S]*?class="e-desc">[\s\S]*?<\/p><a [^>]*href="[^"]+"[^>]*>[\s\S]*?<\/a><\/div><\/li>$/);
+  }
 });
