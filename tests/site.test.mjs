@@ -75,10 +75,11 @@ test('winery photos are copied byte-for-byte and empty experience photos have pl
   assert.equal((home.match(/写真登録予定/g) || []).length, 2);
 });
 test('all six footers keep brand and navigation and omit the three removed notices', async () => {
-  for (const html of [home, ...await Promise.all(makers.map(m => read(`dist/makers/${m.id}/index.html`)))]) {
+  for (const [index, html] of [home, ...await Promise.all(makers.map(m => read(`dist/makers/${m.id}/index.html`)))].entries()) {
     const footer = html.match(/<footer[\s\S]*?<\/footer>/)[0];
     assert.ok(footer.includes('SHIMANAMIの酒'));
     assert.ok(footer.includes('フッターメニュー'));
+    assert.ok(footer.includes(`href="${index === 0 ? '' : '../../'}admin/">管理</a>`));
     assert.doesNotMatch(footer, /運営 登録予定|お問い合わせ 登録予定|20歳未満|飲酒運転|Googleアナリティクス|<small>/);
     assert.doesNotMatch(html, /googletagmanager|gtag\(/);
   }
@@ -92,7 +93,7 @@ test('all local image, stylesheet and page links resolve under a GitHub Pages su
       assert.ok(!url.startsWith('/'), url);
       const local = resolve(root, dirname(path), url.split('#')[0]);
       assert.ok(local.startsWith(join(root, 'dist/')));
-      await readFile(local.endsWith('/') ? `${local}index.html` : local);
+      await readFile(url.split('#')[0].endsWith('/') ? join(local, 'index.html') : local);
     }
   }
 });
