@@ -40,8 +40,8 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
    assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
    if(process.env.SCREENSHOT_DIR){await mkdir(process.env.SCREENSHOT_DIR,{recursive:true});await b.evaluate("document.getElementById('events').scrollIntoView()");await b.screenshot(join(process.env.SCREENSHOT_DIR,`site-photo-events-test-${width}.png`));}
   }
-  await b.evaluate("document.querySelector('#ex-pair').click()");
-  assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list>li')].filter(x=>getComputedStyle(x).display!=='none').length"),1);
+  assert.equal(await b.evaluate("document.querySelectorAll('#experience .chips').length"),0);
+  assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list>li')].filter(x=>getComputedStyle(x).display!=='none').length"),5);
   await delay(50);assert.equal(views.length,1);assert.equal(views[0].page,'/');
   await b.evaluate("document.querySelector('.maker').click()");
   await waitFor("document.querySelector('.d-id h1')?.textContent==='シートで変更した造り手'");

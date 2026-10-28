@@ -150,3 +150,9 @@ test('experiences show booking below description without a side information tabl
     assert.match(row[0], /class="e-main">[\s\S]*?class="e-desc">[\s\S]*?<\/p><a [^>]*href="[^"]+"[^>]*>[\s\S]*?<\/a><\/div><\/li>$/);
   }
 });
+
+test('experience category controls are absent and all experiences remain visible', () => {
+  const section = home.match(/<section[^>]*id="experience"[\s\S]*?<\/section>/)[0];
+  assert.doesNotMatch(section, /class="chips"|体験の種類で絞り込む|種類から探せます|id="ex-/);
+  assert.equal((section.match(/<li data-k=/g)||[]).length, experiences.length);
+});

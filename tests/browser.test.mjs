@@ -37,15 +37,12 @@ test('browser: a failed Google connection keeps both hero buttons fully visible 
     assert.equal(await b.evaluate("[...document.querySelectorAll('.ctas a')].every(a=>{const r=a.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})"),true);
   }
 });
-test('browser: experience filters withstand repeated clicks and reset on refresh', async () => {
-  await b.open(home);
-  for (const key of ['見学','ペアリング','ガイド','診断','周遊','all','見学','見学','all']) {
-    await b.evaluate(`document.querySelector('#experience button[data-k="${key}"]').click()`);
-    const visible = await b.evaluate("[...document.querySelectorAll('#exp-list > li')].filter(x=>getComputedStyle(x).display!=='none').map(x=>x.dataset.k)");
-    assert.equal(visible.length, key === 'all' ? 5 : 1); if (key !== 'all') assert.deepEqual(visible,[key]);
-    assert.equal(await b.evaluate("document.querySelectorAll('#experience button[aria-pressed=true]').length"), 1);
+test('browser: all experiences remain visible without category controls after refresh', async () => {
+  for (let i=0;i<2;i++) {
+    await b.open(home);
+    assert.equal(await b.evaluate("document.querySelectorAll('#experience .chips').length"),0);
+    assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list > li')].filter(x=>!x.hidden).length"),5);
   }
-  await b.open(home); assert.equal(await b.evaluate("document.querySelector('#ex-all').getAttribute('aria-pressed')"), 'true');
 });
 test('browser: event status uses Japan today, including yesterday, today, future and date rollover', async () => {
   // At UTC October 3 15:00 it is October 4 in Japan. The sample ending October 4 must remain upcoming.
