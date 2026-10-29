@@ -1,0 +1,21 @@
+import { readFile,writeFile,mkdir,rm,cp } from 'node:fs/promises';
+import { join,dirname } from 'node:path';
+import { renderPages } from './site-render.mjs';
+const root=process.cwd();
+const read=name=>readFile(join(root,'data',name+'.json'),'utf8').then(JSON.parse);
+const [makers,experiences,events,connection]=await Promise.all(['makers','experiences','events','connection'].map(read));
+if(connection.apps_script_url&&!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(connection.apps_script_url))throw new Error('Apps Script URL is invalid');
+const dist=join(root,'dist');
+await rm(dist,{recursive:true,force:true});await mkdir(dist,{recursive:true});
+await cp(join(root,'assets'),join(dist,'assets'),{recursive:true});
+for(const name of ['site.css','site-render.mjs','site-runtime.mjs'])await cp(join(root,'scripts',name),join(dist,name));
+for(const [path,html] of renderPages(makers,experiences,events,connection)){
+ const target=join(dist,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,html);
+}
+const logo='data:image/png;base64,'+(await readFile(join(root,'assets/brand/shimanami-logo.png'))).toString('base64');
+const adminTemplate=await readFile(join(root,'apps-script/Admin.html'),'utf8');
+const boot={connected:false,needsSetup:false,canSetup:false,endpoint:connection.apps_script_url,previewData:{makers,experiences,events}};
+let admin=adminTemplate.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify(boot).replaceAll('<','\\u003c'));
+if(connection.apps_script_url)admin=admin.replace('<script>','<script>location.replace('+JSON.stringify(connection.apps_script_url)+');</script><script>');
+await mkdir(join(dist,'admin'),{recursive:true});await writeFile(join(dist,'admin/index.html'),admin);
+console.log(`Built home, ${makers.length} maker pages and administrator entry`);
