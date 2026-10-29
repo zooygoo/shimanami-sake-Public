@@ -58,7 +58,7 @@ function save_(request){
     if(request.collection==='experiences'&&record.maker_id&&!readCollection_('makers').some(function(x){return x.id===record.maker_id;}))throw new Error('関連する造り手を確認してください。');
     var sheet=database_().getSheetByName(def.name),lastRow=sheet.getLastRow();
     var row=index<0?lastRow+1:sheet.getRange(2,1,lastRow-1,1).getDisplayValues().findIndex(function(value){return value[0]===record.id;})+2;
-    if(photoPath_(record.photo))photoContent_(record.photo);
+    if(photoPath_(record.photo)&&(index<0||records[index].photo!==record.photo))photoContent_(record.photo);
     if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
     // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
     sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(k){var value=record[k];return SpreadsheetApp.newRichTextValue().setText(value===null?'':typeof value==='object'?JSON.stringify(value):String(value)).build();})]);

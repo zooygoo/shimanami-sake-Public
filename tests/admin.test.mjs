@@ -303,3 +303,43 @@ test('login attempts keep the shared lock through count checks and release it on
  assert.equal(b.lockDepth(),0);b.advance(900001);
  assert.ok(b.login());assert.equal(b.lockDepth(),0);
 });
+
+test('text-only edits keep an existing uploaded photo during image storage outages',()=>{
+ const b=backend();b.setup();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=b.login();
+ const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
+ for(const collection of ['experiences','events']){
+  b.setImageFailure(false);
+  const path=b.rpc({action:'upload',token,collection,base64}).path;
+  const original={...seed[collection][0],photo:path};
+  const save=record=>b.rpc({action:'save',token,collection,record,revision:Number(b.props.get('REVISION')||0)});
+  assert.equal(save(original).ok,true);b.setImageFailure(true);
+  const requests=b.imageRequests.length,edited={...original,description:'写真接続障害中の文章変更'};
+  assert.deepEqual(save(edited),{ok:true,revision:Number(b.props.get('REVISION'))});
+  assert.equal(b.imageRequests.length,requests,'unchanged photo must not require remote image access');
+  assert.deepEqual(b.rpc({action:'load',token}).data[collection][0],edited);
+  const revision=b.props.get('REVISION'),rows=JSON.stringify(b.sheets.get(b.ctx.definition_(collection).name).rows);
+  for(const record of [{...edited,photo:'uploads/'+collection+'/'+'b'.repeat(64)+'.jpg'},{...edited,id:'new-photo-record'}]){
+   assert.equal(save(record).ok,false,'new or changed uploaded photos must still be checked');
+   assert.equal(b.props.get('REVISION'),revision);assert.equal(JSON.stringify(b.sheets.get(b.ctx.definition_(collection).name).rows),rows);
+  }
+  assert.equal(save({...edited,photo:''}).ok,true);assert.equal(b.images.has(path),true);
+ }
+});
+
+for(const collection of ['experiences','events'])test(`${collection}: browser text save survives a real server image outage`,async()=>{
+ const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
+ const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
+ const path=server.rpc({action:'upload',token,collection,base64}).path;
+ assert.equal(server.rpc({action:'save',token,collection,record:{...seed[collection][0],photo:path},revision:0}).ok,true);
+ server.setImageFailure(true);
+ const {client,saves,waitFor,close}=await adminPage(server,token);
+ try{
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click();const input=document.getElementById('input-description');input.value='写真が読めなくても文章を保存';input.dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()`);
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,1);assert.equal(saves[0].result.ok,true);
+  assert.match(await client.evaluate("document.getElementById('status').textContent"),/保存しました/);
+  assert.equal(await client.evaluate("document.getElementById('input-description').value"),'写真が読めなくても文章を保存');
+  const saved=server.rpc({action:'load',token}).data[collection][0];
+  assert.equal(saved.photo,path);assert.equal(saved.description,'写真が読めなくても文章を保存');assert.equal(server.images.get(path).content,base64);
+ }finally{await close();}
+});
