@@ -120,6 +120,53 @@ test('adding an experience or event with an existing ID cannot overwrite it',()=
   assert.equal(b.props.get('REVISION'),undefined);
  }
 });
+for(const collection of ['experiences','events'])test(`${collection}: text-only registration, duplicate rejection and relogin preserve every existing row without photo credentials`,async()=>{
+ const server=backend();server.setup();
+ const password=randomUUID();
+ server.props.set('PASSWORD_HASH',server.ctx.hash_(pbkdf2Sync(password,'salt',600000,32,'sha256').toString('hex')));
+ const token=server.rpc({action:'login',verifier:pbkdf2Sync(password,'salt',600000,32,'sha256').toString('hex')}).token;
+ const before=new Map([...server.sheets].map(([name,sheet])=>[name,JSON.stringify(sheet.rows)]));
+ const {client,saves,waitFor,close}=await adminPage(server,token);
+ const id='text-only-'+collection,title='登録確認 <>&',description='=SUM(A1) 写真なしの紹介文';
+ const submit=async()=>{
+  const count=saves.length;
+  await client.evaluate("document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,count+1);return saves.at(-1).result;
+ };
+ try{
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click();document.getElementById('add').click();document.getElementById('input-id').value=${JSON.stringify(id)};document.getElementById('input-title').value=${JSON.stringify(title)};document.getElementById('input-description').value=${JSON.stringify(description)};document.getElementById('input-sample').checked=true;`+(collection==='events'?"document.getElementById('input-start_date').value='2099-01-01';document.getElementById('input-end_date').value='2099-01-02';":''));
+  assert.equal(await client.evaluate("document.getElementById('photo-choose').disabled"),true);
+  assert.deepEqual(await submit(),{ok:true,revision:1});
+  const loaded=server.rpc({action:'load',token});
+  const record=loaded.data[collection].find(x=>x.id===id);
+  assert.equal(record.title,title);assert.equal(record.description,description);assert.equal(record.photo,'');
+  assert.deepEqual(loaded.data[collection].slice(0,-1),seed[collection]);
+  const sheetName=server.ctx.definition_(collection).name;
+  for(const [name,rows] of before)assert.equal(JSON.stringify(name===sheetName?server.sheets.get(name).rows.slice(0,-1):server.sheets.get(name).rows),rows);
+  const savedRows=new Map([...server.sheets].map(([name,sheet])=>[name,JSON.stringify(sheet.rows)]));
+  await client.evaluate(`document.getElementById('add').click();document.getElementById('input-id').value=${JSON.stringify(id)};document.getElementById('input-title').value='重複で変更しない';`+(collection==='events'?"document.getElementById('input-start_date').value='2099-01-01';document.getElementById('input-end_date').value='2099-01-02';":''));
+  const duplicate=await submit();assert.equal(duplicate.ok,false);assert.match(duplicate.error,/すでに/);
+  assert.equal(server.props.get('REVISION'),'1');
+  for(const [name,rows] of savedRows)assert.equal(JSON.stringify(server.sheets.get(name).rows),rows);
+  await client.evaluate("document.getElementById('review-back').click();document.getElementById('logout').click()");
+  await waitFor("document.getElementById('workspace').hidden");
+  assert.equal(server.rpc({action:'save',token,collection,record:{...record,title:'拒否する変更'},revision:1}).ok,false);
+  await client.evaluate(`document.getElementById('password').value=${JSON.stringify(password)};document.getElementById('login').requestSubmit()`);
+  await waitFor("!document.getElementById('workspace').hidden");
+  const fresh=await client.evaluate("sessionStorage.getItem('shimanami.admin.session')");
+  assert.ok(fresh);assert.notEqual(fresh,token);
+  const index=loaded.data[collection].findIndex(x=>x.id===id);
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click();document.getElementById('record').value=${JSON.stringify(String(index))};document.getElementById('record').dispatchEvent(new Event('change'))`);
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
+  assert.equal(await client.evaluate("document.getElementById('input-description').value"),description);
+  assert.deepEqual(server.rpc({action:'load',token:fresh}).data,loaded.data);
+  const publicData=server.ctx.publicData_(true),home=renderPages(publicData.makers,publicData.experiences,publicData.events).get('index.html');
+  assert.ok(home.includes('登録確認 &lt;&gt;&amp;'));assert.ok(home.includes(description));
+  assert.equal(server.imageRequests.length,0);assert.equal(server.props.get('GITHUB_IMAGE_TOKEN'),undefined);
+  for(const [name,rows] of savedRows)assert.equal(JSON.stringify(server.sheets.get(name).rows),rows);
+ }finally{await close();}
+});
 for(const collection of ['experiences','events'])test(`${collection}: new entry, duplicate rejection and photo lifecycle use the real server`,async()=>{
  const server=backend();server.setup();const token=server.login();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
  const {client,saves,waitFor,open,close}=await adminPage(server,token);
