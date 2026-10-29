@@ -372,3 +372,24 @@ test('browser clears an expired session on logout and can log in again',async()=
   assert.equal(server.rpc({action:'load',token}).ok,false);
  }finally{await close();}
 });
+
+test('legacy view-only statistics distinguish unmeasured clicks from measured zero',()=>{
+ const b=backend();b.setup();const token=b.login(),rows=b.sheets.get('閲覧記録').rows;
+ rows.push(['2026-10-28 12:00:00','2026-10-28','/',randomUUID()]);const before=JSON.stringify(rows);
+ const legacy=b.rpc({action:'stats',token});assert.equal(legacy.clicksMeasured,false);assert.equal(legacy.counts.total,1);
+ assert.equal(JSON.stringify(rows),before,'reading statistics must preserve the legacy sheet');
+ assert.equal(b.ctx.recordView_({action:'view',page:'/',event_id:randomUUID()}).ok,true);
+ const measured=b.rpc({action:'stats',token});assert.equal(measured.clicksMeasured,true);assert.equal(measured.clicks.total,0);
+ assert.equal(b.ctx.recordView_({action:'click',page:'/',target:'maker:omishima-winery:website',event_id:randomUUID()}).ok,true);
+ assert.equal(b.rpc({action:'stats',token}).clicks.total,1);
+});
+
+test('browser labels legacy click statistics as unmeasured while keeping view totals',async()=>{
+ const server=backend();server.setup();const {client,waitFor,close}=await adminPage(server,server.login());
+ try{
+  await client.evaluate("document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.getElementById('stats-content').textContent.includes('未計測')");
+  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content table').length"),2);
+  assert.equal(await client.evaluate("document.getElementById('stats-content').textContent.includes('今月の閲覧数')"),true);
+ }finally{await close();}
+});
