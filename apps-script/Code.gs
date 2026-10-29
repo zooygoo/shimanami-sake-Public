@@ -93,8 +93,11 @@ function rpc(request){
         cache.remove('login-failures');var token=uuid_();cache.put('session:'+digest_(token),'1',3600);return {ok:true,token:token};
       }finally{loginLock.releaseLock();}
     }
+    if(request.action==='logout'){
+      if(typeof request.token!=='string'||!request.token)throw new Error('ログインし直してください。');
+      cache.remove('session:'+digest_(request.token));return {ok:true};
+    }
     session_(request.token);
-    if(request.action==='logout'){cache.remove('session:'+digest_(request.token));return {ok:true};}
     if(request.action==='load')return {ok:true,data:publicData_(),revision:Number(props.getProperty('REVISION')||0)};
     if(request.action==='save')return save_(request);
     if(request.action==='upload')return uploadPhoto_(request);

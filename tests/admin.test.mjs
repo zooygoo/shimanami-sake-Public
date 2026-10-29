@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { browser } from './helpers/browser.mjs';
 import { renderPages } from '../scripts/site-render.mjs';
 import vm from 'node:vm';
-import { createHmac, createHash, randomUUID } from 'node:crypto';
+import { createHmac, createHash, randomUUID, pbkdf2Sync } from 'node:crypto';
 const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8');
 const seed=Object.fromEntries(['makers','experiences','events'].map(k=>[k,JSON.parse(readFileSync(new URL(`../data/${k}.json`,import.meta.url),'utf8'))]));
 function backend() {
@@ -64,7 +64,7 @@ async function adminPage(server,token){
  const fixture=await mkdtemp(join(tmpdir(),'sake-admin-flow-'));let client;
  try{
   const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
-  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
   client=await browser(fixture);
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding',{name:'testRpc'});
@@ -341,5 +341,34 @@ for(const collection of ['experiences','events'])test(`${collection}: browser te
   assert.equal(await client.evaluate("document.getElementById('input-description').value"),'写真が読めなくても文章を保存');
   const saved=server.rpc({action:'load',token}).data[collection][0];
   assert.equal(saved.photo,path);assert.equal(saved.description,'写真が読めなくても文章を保存');assert.equal(server.images.get(path).content,base64);
+ }finally{await close();}
+});
+
+test('expired session logout is repeatable without reviving access or ending another session',()=>{
+ const b=backend();b.setup();const expired=b.login();b.advance(1800000);const other=b.login();b.advance(1801000);
+ assert.equal(b.rpc({action:'load',token:expired}).ok,false);
+ for(let i=0;i<2;i++)assert.deepEqual(b.rpc({action:'logout',token:expired}),{ok:true});
+ for(const action of ['load','stats','save','upload','photo'])assert.equal(b.rpc({action,token:expired}).ok,false);
+ assert.equal(b.rpc({action:'load',token:other}).ok,true);
+ for(const token of [undefined,null,'',{},123])assert.equal(b.rpc({action:'logout',token}).ok,false);
+ assert.equal(b.rpc({action:'logout',token:other}).ok,true);assert.equal(b.rpc({action:'load',token:other}).ok,false);
+ const fresh=b.login();assert.equal(b.rpc({action:'load',token:fresh}).ok,true);
+});
+
+test('browser clears an expired session on logout and can log in again',async()=>{
+ const server=backend();server.setup();const token=server.login();
+ const {client,waitFor,close}=await adminPage(server,token);
+ try{
+  server.advance(3601000);
+  await client.evaluate("document.getElementById('logout').click()");
+  await waitFor("document.getElementById('workspace').hidden");
+  assert.equal(await client.evaluate("sessionStorage.getItem('shimanami.admin.session')"),null);
+  assert.match(await client.evaluate("document.getElementById('status').textContent"),/ログアウトしました/);
+  server.props.set('PASSWORD_HASH',server.ctx.hash_(pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')));
+  await client.evaluate("document.getElementById('password').value='1234';document.getElementById('login').requestSubmit()");
+  await waitFor("!document.getElementById('workspace').hidden");
+  const fresh=await client.evaluate("sessionStorage.getItem('shimanami.admin.session')");
+  assert.ok(fresh);assert.notEqual(fresh,token);assert.equal(server.rpc({action:'load',token:fresh}).ok,true);
+  assert.equal(server.rpc({action:'load',token}).ok,false);
  }finally{await close();}
 });
