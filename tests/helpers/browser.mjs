@@ -15,7 +15,8 @@ export async function browser(serveRoot = process.cwd()) {
   let launchError;
   child.on('error', error => { launchError = error; });
   let port;
-  for (let i = 0; i < 200; i++) {
+  // A cold Chrome launch on CI can take longer than five seconds.
+  for (let i = 0; i < 800; i++) {
     if (launchError) throw launchError;
     try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break; } catch { await delay(25); }
   }
