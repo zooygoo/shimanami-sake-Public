@@ -59,5 +59,13 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   assert.equal(views.filter(x=>x.action==='view').length,3);
   assert.deepEqual(views.filter(x=>x.action==='click').map(x=>x.target),['maker:'+state.makers[0].id+':directions','experience:'+state.experiences[0].id,'event:'+state.events[0].id]);
   assert.equal(new Set(views.map(x=>x.event_id)).size,6);assert.ok(!JSON.stringify(views).includes('source=site'));
+  // Analytics may be blocked independently of the public content response.
+  await b.send('Page.addScriptToEvaluateOnNewDocument',{source:`navigator.sendBeacon=()=>{throw new Error('Beacon blocked');};const originalFetch=window.fetch;window.fetch=(url,options)=>{if(options?.method==='POST')throw new Error('Tracking blocked');return originalFetch(url,options);};`});
+  await b.open(pathToFileURL(join(fixture,'dist/index.html')).href,390,900);
+  await waitFor("document.querySelector('.maker .name').textContent==='シートで変更した造り手'");
+  await b.evaluate("document.getElementById('ev-all').click()");
+  assert.equal(await b.evaluate("[...document.querySelectorAll('#ev-list>li')].every(row=>!row.hidden)"),true);
+  await click('#exp-list [data-link-target]');
+  assert.equal(views.length,6,'failed analytics must not create a fake successful record');
  }finally{if(b)await b.close();await rm(fixture,{recursive:true,force:true});}
 });

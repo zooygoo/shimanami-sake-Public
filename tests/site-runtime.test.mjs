@@ -23,3 +23,12 @@ test('external clicks send only the canonical target and page; unknown targets n
  for(const target of ['https://example.test/?private=x','maker:unknown','event:x?query=secret','__proto__'])assert.equal(sendLinkClick(endpoint,'/',target,services),false);
  assert.equal(sendLinkClick(endpoint,'/admin/','event:market',services),false);assert.equal(calls.length,1);
 });
+
+test('analytics transport errors never throw into site rendering or link navigation',()=>{
+ let fallbacks=0;
+ const crypto={randomUUID},navigator={sendBeacon(){throw new Error('Beacon blocked');}};
+ assert.equal(sendPageView(endpoint,'/',{crypto,navigator,fetch(){fallbacks++;return Promise.resolve();}}),true);
+ assert.equal(fallbacks,1);
+ assert.equal(sendLinkClick(endpoint,'/','event:market',{crypto,navigator,fetch(){throw new Error('Network blocked');}}),false);
+ assert.equal(sendPageView(endpoint,'/',{crypto:{randomUUID(){throw new Error('Unavailable');}}}),false);
+});

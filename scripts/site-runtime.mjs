@@ -9,11 +9,13 @@ export function sendLinkClick(endpoint,page,target,services=globalThis){
 }
 function sendEvent(endpoint,page,event,services){
   if(!validEndpoint(endpoint)||!/^\/(?:makers\/[a-z][a-z0-9-]*\/)?$/.test(page))return false;
-  const payload=JSON.stringify({...event,page,event_id:services.crypto.randomUUID()});
-  const body=new Blob([payload],{type:'text/plain;charset=UTF-8'});
-  if(services.navigator?.sendBeacon?.(endpoint,body))return true;
-  services.fetch(endpoint,{method:'POST',body,mode:'no-cors',credentials:'omit',keepalive:true}).catch(()=>{});
-  return true;
+  let body;
+  try{body=new Blob([JSON.stringify({...event,page,event_id:services.crypto.randomUUID()})],{type:'text/plain;charset=UTF-8'});}catch{return false;}
+  try{if(services.navigator?.sendBeacon?.(endpoint,body))return true;}catch{}
+  try{
+    services.fetch(endpoint,{method:'POST',body,mode:'no-cors',credentials:'omit',keepalive:true}).catch(()=>{});
+    return true;
+  }catch{return false;}
 }
 export function loadPublicData(endpoint){
   return new Promise((resolve,reject)=>{
