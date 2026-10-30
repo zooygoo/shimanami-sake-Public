@@ -14,8 +14,7 @@ for(const [path,html] of renderPages(makers,experiences,events,connection)){
 }
 const logo='data:image/png;base64,'+(await readFile(join(root,'assets/brand/shimanami-logo.png'))).toString('base64');
 const adminTemplate=await readFile(join(root,'apps-script/Admin.html'),'utf8');
-const boot={connected:false,needsSetup:false,canSetup:false,endpoint:connection.apps_script_url,previewData:{makers,experiences,events}};
+const boot={connected:!!connection.apps_script_url,transport:'http',needsSetup:false,canSetup:false,endpoint:connection.apps_script_url,...(!connection.apps_script_url?{previewData:{makers,experiences,events}}:{})};
 let admin=adminTemplate.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify(boot).replaceAll('<','\\u003c'));
-if(connection.apps_script_url)admin=admin.replace('<script>','<script>location.replace('+JSON.stringify(connection.apps_script_url)+');</script><script>');
 await mkdir(join(dist,'admin'),{recursive:true});await writeFile(join(dist,'admin/index.html'),admin);
 console.log(`Built home, ${makers.length} maker pages and administrator entry`);

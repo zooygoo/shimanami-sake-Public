@@ -22,6 +22,12 @@ test('package scripts use Node only and have no dependencies', async () => {
   assert.deepEqual(pkg.scripts, { build: 'node scripts/build.mjs', test: 'node --test' });
   assert.deepEqual(pkg.dependencies, {}); assert.deepEqual(pkg.devDependencies, {});
 });
+test('site administrator entry stays on the site and selects the credential-free HTTP transport',async()=>{
+ const admin=await read('dist/admin/index.html');
+ assert.equal(/location\.(?:replace|assign)\(/.test(admin),false);
+ assert.match(admin,/"transport":"http"/);
+ assert.match(admin,/管理者ログイン/);
+});
 test('all five makers exactly match the supplied names, addresses, phones and empty fields', () => {
   assert.deepEqual(makers.map(m => [m.id, m.name, m.kind, m.area, m.sub, m.postal, m.address, m.tel, m.website]), [
     ['omishima-brewery','大三島ブリュワリー','ビール','大三島','しまなみ海道の小さな地ビール醸造所','794-1304','愛媛県今治市大三島町宮浦5589','0897-72-9248',''],
