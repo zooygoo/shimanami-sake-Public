@@ -21,16 +21,25 @@ for (const width of [360, 390, 768, 860, 861, 1366, 1920]) test(`browser: home a
   const links = await b.evaluate(`[...document.querySelectorAll('.maker')].map(a=>a.href)`);
   for (const link of links) { await b.open(link, width); assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, link); await b.evaluate("Promise.all([...document.images].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)"); assert.equal(await b.evaluate('[...document.images].every(x=>x.complete && x.naturalWidth>0)'), true); }
 });
-test('browser: desktop logos remain large and contained in equal square panels',async()=>{
- for(const width of [861,1366,1920]){
+test('browser: logos retain balanced margins on white panels at mobile and desktop widths',async()=>{
+ for(const width of [390,861,1366,1920]){
   await b.open(home,width);
   await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
-  const panels=await b.evaluate("[...document.querySelectorAll('.m-vis')].map(p=>{const r=p.getBoundingClientRect(),i=p.querySelector('img').getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom,large:i.width/r.width,contained:i.left>=r.left&&i.right<=r.right&&i.top>=r.top&&i.bottom<=r.bottom}})");
+  const panels=await b.evaluate("[...document.querySelectorAll('.m-vis')].map(p=>{const r=p.getBoundingClientRect(),i=p.querySelector('img').getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom,background:getComputedStyle(p).backgroundColor,fit:getComputedStyle(p.querySelector('img')).objectFit,relativeWidth:i.width/r.width,relativeHeight:i.height/r.height,contained:i.left>=r.left&&i.right<=r.right&&i.top>=r.top&&i.bottom<=r.bottom}})");
   for(const p of panels){
-   assert.ok(Math.abs(p.width-p.height)<1,'every logo panel stays square after the source image loads');
-   assert.ok(Math.abs(p.bottom-panels[0].bottom)<1.1,'all card bodies begin at the same height');
-   assert.ok(p.large>.85&&p.contained,'logo uses the enlarged panel without clipping');
+   if(width>860){
+    assert.ok(Math.abs(p.width-p.height)<1,'desktop logo panels stay square');
+    assert.ok(Math.abs(p.bottom-panels[0].bottom)<1.1,'desktop card bodies begin at the same height');
+   }
+   assert.ok(p.relativeWidth<.82&&p.relativeHeight<.66&&p.contained,'logo retains margins on every side');
+   assert.equal(p.fit,'contain','source logo proportions are preserved');
+   assert.equal(p.background,'rgb(255, 255, 255)','logo background is white');
   }
+  await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+  await b.evaluate("document.querySelector('.maker').scrollIntoView({block:'center'})");
+  const point=await b.evaluate("(()=>{const r=document.querySelector('.m-vis').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()");
+  await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+  assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.m-vis')).backgroundColor"),'rgb(255, 255, 255)','hover keeps the logo background white');
  }
 });
 test('browser: approved hero content fits the first viewport at 390 and 1366', async () => {
