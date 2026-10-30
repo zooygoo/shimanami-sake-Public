@@ -8,7 +8,7 @@ test('map and every maker detail search for the named business with its address'
  for(const m of data.makers){const query=encodeURIComponent(m.name+' '+m.address),link='https://www.google.com/maps/search/?api=1&amp;query='+query;assert.ok(pages.get('index.html').includes(link));assert.ok(pages.get('makers/'+m.id+'/index.html').includes(link));}
 });
 test('every experience booking uses the same label regardless of old saved custom labels',()=>{
- const html=renderPages(data.makers,data.experiences,data.events).get('index.html');
+ const html=renderPages(data.makers,data.experiences.map(x=>({...x,sample:false})),data.events).get('index.html');
  const labels=[...html.matchAll(/<a[^>]*data-link-target="experience:[^"]+"[^>]*>([^<]+)<\/a>/g)].map(x=>x[1]);
  // Sample anchor URLs have no tracking attribute; inspect the visible experience section as well.
  const section=html.match(/<ul class="exp-list"[\s\S]*?<\/ul>/)[0];
