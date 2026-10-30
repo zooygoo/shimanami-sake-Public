@@ -371,3 +371,13 @@ data/events.json (배열, 시작일 순)
 ### 2026-10-30 사이트 내부 관리자 통합 반영
 - 기존 통계 작업, 휴대폰 카드 작업, 사업자 이미지 편집 작업을 사이트 내부 관리자 가지에 통합한다. 같은 Google 실행 주소의 버전 7에 반영했으며 연결 준비 응답의 apiVersion 1을 확인했다.
 - 최신 비공개 사이트 소스를 기준으로 임시 /admin-check/에서 기존 비밀번호의 새 로그인을 확인한 뒤 운영 /admin/으로 전환한다. 로그인·실저장 확인 전에는 기존 입구를 유지하며 최종 전환 후 임시 확인 경로를 제거한다.
+
+### 개인 GitHub 공유 확인 우선 전환 (2026-10-30 사용자 지시)
+
+- 콘텐츠 등록·정리와 회사 이전 전에 개인 zooygoo 저장소의 GitHub Pages로 공유 확인한다. ChatGPT 계정 로그인을 요구하지 않는 주소가 목적이다. 기존 Google 버전 7·비밀번호·시트는 유지한다. 사용자가 관리자 정상 로그인을 확인했다고 보고했다.
+- 합격 조건: 하위 경로 /shimanami-sake-Public/admin/에서 사이트 보기·저장 후 확인·초기 자산 이미지가 같은 GitHub 사이트를 가리킨다. 정적 배포본은 전용 gh-pages 브랜치 루트에 올리고 .nojekyll을 포함한다. 실제 콘텐츠 입력은 이후 관리 화면에서 한다.
+- 관리자 HTTP 화면은 현재 /admin/의 상위 경로를 사이트 기준 주소로 사용한다. Google 내부 화면은 기존 미리보기 기본 주소를 유지한다. 새 데이터 칸과 서버 변경은 없다.
+- 현재 저장소 private와 REST/GraphQL 설정 요청 Forbidden을 확인했다. 설정 변경 도구가 없어 마지막 GitHub Pages 활성화·무료 사용 시 저장소 공개 전환은 소유자 설정 화면에서 필요하다. 코드·정적 배포본을 먼저 준비하고, 공개되지 않은 주소를 배포 성공이라고 보고하지 않는다.
+- 시험: GitHub 하위 경로의 관리자에서 사이트 보기 주소·siteBase를 확인하고 기존 통합 시험을 실행한다.
+
+2026-10-30 GitHub Pages 설정 후 확인: 저장소 public, gh-pages fa4eb1162abb33657a20ce9dbe1039aa8c331079의 pages build and deployment 실행 41019140369가 completed/success이며 build·report-build-status·deploy가 모두 성공했다. 공유 주소는 https://zooygoo.github.io/shimanami-sake-Public/, 관리자는 같은 주소의 /admin/이다. 현재 환경의 github.io 직접 접근은 프록시 403으로 차단돼 실제 브라우저 화면·로그인·저장 확인을 배포 성공과 구분한다. Pages 활성화 대기 경고는 해소했다.
