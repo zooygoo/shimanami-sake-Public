@@ -95,6 +95,12 @@ test('authenticated edits persist in Sheets and are returned by the public snaps
  const state=b.rpc({action:'load',token});assert.equal(state.data.makers[0].description,record.description);assert.equal(state.revision,1);
  const publicData=b.ctx.publicData_();assert.equal(publicData.makers[0].description,record.description);assert.equal(publicData.token,undefined);assert.equal(publicData.views,undefined);
 });
+async function fulfillAdminAsset(client,event){
+ const path=new URL(event.request.url).pathname.match(/\/assets\/((?:makers|photos)\/[a-zA-Z0-9_-]+\.(?:png|jpg|jpeg|webp))$/)?.[1];
+ if(!path)return false;
+ const bytes=readFileSync(new URL('../assets/'+path,import.meta.url));
+ await client.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:path.endsWith('.png')?'image/png':'image/jpeg'}],body:bytes.toString('base64')});return true;
+}
 async function adminPage(server,token){
  const fixture=await mkdtemp(join(tmpdir(),'sake-admin-flow-'));let client;
  try{
@@ -102,6 +108,9 @@ async function adminPage(server,token){
   const logo='data:image/png;base64,'+readFileSync(new URL('../assets/brand/shimanami-logo.png',import.meta.url)).toString('base64');
   await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
   client=await browser(fixture);
+  await client.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});
+  await client.send('Fetch.enable',{patterns:[{urlPattern:'*://*/assets/*'}]});
+  client.on('Fetch.requestPaused',async event=>{if(!await fulfillAdminAsset(client,event))await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});});
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding',{name:'testRpc'});
   const saves=[];
@@ -656,9 +665,10 @@ async function siteAdminPage(server,{initialFailure=false,oldServer=false}={}){
   await writeFile(join(fixture,'index.html'),html.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({transport:'http',connected:true,endpoint:'https://script.google.com/macros/s/test-only/exec',needsSetup:false,canSetup:false})));
   client=await browser(fixture);await client.send('Network.setBlockedURLs',{urls:[]});
   await client.send('Network.setCookie',{name:'SID',value:'fake-google-session',domain:'script.google.com',path:'/',secure:true,sameSite:'None'});
-  await client.send('Fetch.enable',{patterns:[{urlPattern:'https://*'}]});
+  await client.send('Fetch.enable',{patterns:[{urlPattern:'https://*'},{urlPattern:'*://*/assets/*'}]});
   client.on('Fetch.requestPaused',async event=>{
    try{
+    if(await fulfillAdminAsset(client,event))return;
     if(!event.request.url.startsWith('https://script.google.com/')){await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});return;}
     requests.push(event.request);assert.notEqual(event.request.method,'OPTIONS','simple POST must avoid a preflight');
     assert.equal(Object.keys(event.request.headers).some(x=>x.toLowerCase()==='cookie'),false,'Google account cookies must not be sent');

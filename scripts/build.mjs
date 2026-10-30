@@ -7,6 +7,7 @@ const [makers,experiences,events,connection]=await Promise.all(['makers','experi
 if(connection.apps_script_url&&!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(connection.apps_script_url))throw new Error('Apps Script URL is invalid');
 const dist=join(root,'dist');
 await rm(dist,{recursive:true,force:true});await mkdir(dist,{recursive:true});
+await writeFile(join(dist,'.nojekyll'),'');
 await cp(join(root,'assets'),join(dist,'assets'),{recursive:true});
 for(const name of ['site.css','site-render.mjs','site-runtime.mjs'])await cp(join(root,'scripts',name),join(dist,name));
 for(const [path,html] of renderPages(makers,experiences,events,connection)){
