@@ -10,16 +10,28 @@ const home = pathToFileURL(join(root, 'dist/index.html')).href;
 let b;
 before(async () => { execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root }); b = await browser(); });
 after(async () => { if (b) await b.close(); });
-for (const width of [360, 390, 1366, 1920]) test(`browser: home and all five details fit width ${width}; maker row scrolls only on mobile`, async () => {
+for (const width of [360, 390, 768, 860, 861, 1366, 1920]) test(`browser: home and all five details fit width ${width}; maker cards stack on mobile`, async () => {
   await b.open(home, width, 900);
   assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
-  const row = await b.evaluate(`(() => { const r = document.querySelector('.row5'); return {scroll:r.scrollWidth, width:r.clientWidth, tops:[...r.children].map(x=>x.getBoundingClientRect().top)}; })()`);
-  if (width < 600) {
-    assert.ok(row.scroll > row.width);
-    assert.equal(await b.evaluate(`(() => {const r=document.querySelector('.row5');r.scrollLeft=r.scrollWidth;return r.lastElementChild.getBoundingClientRect().right <= r.getBoundingClientRect().right + 1})()`), true);
+  const row = await b.evaluate(`(() => { const r = document.querySelector('.row5'); return {scroll:r.scrollWidth, width:r.clientWidth, tops:[...r.children].map(x=>x.getBoundingClientRect().top),bottoms:[...r.children].map(x=>x.getBoundingClientRect().bottom)}; })()`);
+  assert.ok(row.scroll <= row.width, "no horizontal scrolling in the maker list");
+  if (width <= 860) {
+    assert.ok(row.tops.every((top,i)=>i===0 || top>=row.bottoms[i-1]+15), "every maker follows the previous card vertically");
   } else assert.ok(row.tops.every(t => t === row.tops[0]));
   const links = await b.evaluate(`[...document.querySelectorAll('.maker')].map(a=>a.href)`);
   for (const link of links) { await b.open(link, width); assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, link); await b.evaluate("Promise.all([...document.images].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)"); assert.equal(await b.evaluate('[...document.images].every(x=>x.complete && x.naturalWidth>0)'), true); }
+});
+test('browser: desktop logos remain large and contained in equal square panels',async()=>{
+ for(const width of [861,1366,1920]){
+  await b.open(home,width);
+  await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
+  const panels=await b.evaluate("[...document.querySelectorAll('.m-vis')].map(p=>{const r=p.getBoundingClientRect(),i=p.querySelector('img').getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom,large:i.width/r.width,contained:i.left>=r.left&&i.right<=r.right&&i.top>=r.top&&i.bottom<=r.bottom}})");
+  for(const p of panels){
+   assert.ok(Math.abs(p.width-p.height)<1,'every logo panel stays square after the source image loads');
+   assert.ok(Math.abs(p.bottom-panels[0].bottom)<1.1,'all card bodies begin at the same height');
+   assert.ok(p.large>.85&&p.contained,'logo uses the enlarged panel without clipping');
+  }
+ }
 });
 test('browser: approved hero content fits the first viewport at 390 and 1366', async () => {
   for (const width of [390, 1366]) {
@@ -28,15 +40,15 @@ test('browser: approved hero content fits the first viewport at 390 and 1366', a
     assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.hero')).backgroundColor"), 'rgb(0, 80, 142)');
   }
 });
-test('browser: mobile maker logos fit equal compact panels after loading and every swipe',async()=>{
- for(const width of [360,390,402,430]){
+test('browser: mobile maker logos fill larger equal panels with full-width stacked cards',async()=>{
+ for(const width of [360,390,402,430,768,860]){
   await b.open(home,width,874);
   await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
   for(let index=0;index<5;index++){
-   const layout=await b.evaluate(`(() => {const row=document.querySelector('.row5'),card=row.children[${index}];row.scrollLeft=card.offsetLeft-row.firstElementChild.offsetLeft;const panel=card.querySelector('.m-vis').getBoundingClientRect(),image=card.querySelector('img').getBoundingClientRect(),body=card.querySelector('.m-body').getBoundingClientRect(),bounds=card.getBoundingClientRect();return {height:panel.height,cardHeight:bounds.height,bodyTop:body.top,panelBottom:panel.bottom,contained:image.left>=panel.left&&image.right<=panel.right&&image.top>=panel.top&&image.bottom<=panel.bottom,allHeights:[...row.children].map(x=>x.querySelector('.m-vis').getBoundingClientRect().height)};})()`);
-   assert.equal(layout.height,144,`${width}px card ${index} has a fixed compact logo panel`);
+   const layout=await b.evaluate(`(() => {const row=document.querySelector('.row5'),card=row.children[${index}];const panel=card.querySelector('.m-vis').getBoundingClientRect(),image=card.querySelector('img').getBoundingClientRect(),body=card.querySelector('.m-body').getBoundingClientRect(),bounds=card.getBoundingClientRect();return {height:panel.height,cardWidth:bounds.width,rowWidth:row.clientWidth,bodyTop:body.top,panelBottom:panel.bottom,contained:image.left>=panel.left&&image.right<=panel.right&&image.top>=panel.top&&image.bottom<=panel.bottom,allHeights:[...row.children].map(x=>x.querySelector('.m-vis').getBoundingClientRect().height)};})()`);
+   assert.equal(layout.height,184,`${width}px card ${index} has a larger fixed logo panel`);
    assert.ok(layout.allHeights.every(height=>Math.abs(height-layout.height)<1),'all logos use the same panel height');
-   assert.ok(layout.cardHeight<=360,`${width}px card ${index} is compact: ${layout.cardHeight}`);
+   assert.equal(layout.cardWidth,layout.rowWidth,`${width}px card ${index} uses the full list width`);
    assert.ok(layout.contained,`${width}px card ${index} logo stays inside its own panel`);
    assert.equal(layout.bodyTop,layout.panelBottom,'the blue border begins directly below the logo panel');
   }
