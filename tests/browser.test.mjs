@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { browser } from './helpers/browser.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -63,14 +63,18 @@ test('browser: all experiences remain visible without category controls after re
   }
 });
 test('browser: event status uses Japan today, including yesterday, today, future and date rollover', async () => {
+  const {renderPages}=await import('../scripts/site-render.mjs');
+  const data=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(root,'data',k+'.json'),'utf8'))])));
+  const eventFile=join(root,'dist/event-date-test.html'),eventHome=pathToFileURL(eventFile).href;
+  await writeFile(eventFile,renderPages(data.makers,data.experiences,data.events.map(x=>({...x,sample:false}))).get('index.html'));
   // At UTC October 3 15:00 it is October 4 in Japan. The sample ending October 4 must remain upcoming.
   const script = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: "{ const OriginalDate=Date; globalThis.Date=class extends OriginalDate { constructor(...args){super(...(args.length?args:['2026-10-03T15:00:00Z']))} static now(){return new OriginalDate('2026-10-03T15:00:00Z').getTime()} }; }" });
   await b.send('Emulation.setTimezoneOverride', { timezoneId: 'America/Los_Angeles' });
-  await b.open(home);
+  await b.open(eventHome);
   assert.equal(await b.evaluate("document.querySelector('[data-end-date=\"2026-10-04\"]').dataset.k"), '開催予定');
   await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script.identifier });
   const next = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: "{ const OriginalDate=Date; globalThis.Date=class extends OriginalDate { constructor(...args){super(...(args.length?args:['2026-10-04T15:00:00Z']))} }; }" });
-  await b.open(home);
+  await b.open(eventHome);
   for (const key of ['終了','終了','all','開催予定']) {
     await b.evaluate(`document.querySelector('#events button[data-k="${key}"]').click()`);
     assert.equal(await b.evaluate("[...document.querySelectorAll('#ev-list > li')].filter(x=>getComputedStyle(x).display!=='none').length"), key==='all'?4:key==='終了'?1:3);
@@ -78,6 +82,7 @@ test('browser: event status uses Japan today, including yesterday, today, future
   assert.equal(await b.evaluate("document.querySelector('.ended .status').textContent"), '終了');
   assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.ended h3')).color"), 'rgb(138, 153, 168)');
   await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: next.identifier });
+  await rm(eventFile);
 });
 test('browser: keyboard navigation, images and required screenshot widths', async () => {
   await b.open(home, 1366);

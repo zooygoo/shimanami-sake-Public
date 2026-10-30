@@ -17,7 +17,7 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   state.makers[0].name='シートで変更した造り手';state.makers[0].description='<img src=x onerror="window.injected=true">';
   state.experiences[0].booking_url='https://booking.example.test/reserve?source=site';state.events[0].url='https://info.example.test/event';
   const jpeg='data:image/jpeg;base64,'+(await readFile(join(fixture,'assets/photos/winery-tanks.jpg'))).toString('base64');
-  state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;
+  state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;state.events[0].sample=false;state.events[1].sample=false;
   state.makers[0].logo=jpeg;state.makers[0].photos=[jpeg];state.experiences[0].maker_id=state.makers[0].id;state.experiences[0].sample=false;
   execFileSync(process.execPath,['scripts/build.mjs'],{cwd:fixture});b=await browser(fixture);
   await b.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});

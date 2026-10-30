@@ -47,8 +47,9 @@ test('data uses only the planned fields and asset paths', async () => {
 test('all mockup experiences and events are marked as samples', () => {
   assert.equal(experiences.length, 5); assert.equal(events.length, 4);
   assert.ok([...experiences, ...events].every(x => x.sample === true));
-  for (const x of [...experiences, ...events]) { assert.ok(home.includes(x.title)); }
-  assert.equal((home.match(/class="sample"/g) || []).length, 9);
+  for (const x of experiences) assert.ok(home.includes(x.title));
+  for (const x of events) assert.ok(!home.includes(x.title));
+  assert.equal((home.match(/class="sample"/g) || []).length, 5);
 });
 test('home contains the approved hero, maker cards, supplied map and filters', () => {
   for (const text of ['しまなみの風土から','造り手を見る','酒蔵・醸造所見学','ペアリング','文化ガイド','お酒診断','スタンプラリー','開催予定','終了','すべて','地図を大きく見る']) assert.ok(home.includes(text), text);
@@ -66,13 +67,13 @@ test('all maker details have correct contact information and only populated opti
 });
 test('map and detail directions encode the address without a postal code', async () => {
   for (const m of makers) {
-    const expected = `https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(m.address)}`;
+    const expected = `https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(m.name+' '+m.address)}`;
     assert.ok(home.includes(expected)); assert.ok((await read(`dist/makers/${m.id}/index.html`)).includes(expected));
   }
 });
 test('bookings and event links use data URLs and open a safe new tab', () => {
   for (const x of experiences) assert.ok(home.includes(`href="${x.booking_url}" target="_blank" rel="noopener noreferrer"`));
-  for (const x of events) assert.ok(home.includes(`href="${x.url}" target="_blank" rel="noopener noreferrer"`));
+  for (const x of events) assert.ok(!home.includes(x.title));
 });
 test('winery photos are copied byte-for-byte and empty experience photos have placeholders', async () => {
   const winery = makers.find(m => m.id === 'omishima-winery');
