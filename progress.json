@@ -4,9 +4,9 @@
   "code": "SAKE",
   "stage": "검증",
   "percent": 43,
-  "now": "최신 통합본 전체 시험 89건을 통과하고 개인 저장소 gh-pages 브랜치에 사이트·관리자 배포 파일을 올렸습니다. GitHub 설정 API가 Forbidden이라 마지막 Pages 활성화가 남았습니다.",
-  "summary": "개인 GitHub 배포 브랜치 업로드 완료, Pages 설정 대기",
-  "next": "GitHub 저장소 Settings에서 무료 Pages용 공개 범위와 Pages의 gh-pages / (root)를 설정한 뒤 실제 github.io 주소의 사이트·관리자 연결을 확인합니다. 콘텐츠 등록·정리는 그 뒤에 진행합니다.",
+  "now": "개인 저장소 공개 전환과 gh-pages 기준 GitHub Pages 배포 성공을 확인했습니다. 빌드·상태 보고·배포 세 작업 모두 success이며 실제 GitHub 주소에서 화면·관리자 연결 최종 확인을 이어갑니다.",
+  "summary": "GitHub Pages 배포 성공 확인, 공유 주소 사용 가능",
+  "next": "https://zooygoo.github.io/shimanami-sake-Public/ 및 /admin/에서 실제 화면과 기존 비밀번호 로그인을 확인합니다. 이 작업환경은 github.io 직접 요청이 네트워크 정책으로 차단돼 배포 로그 확인과 실제 화면 확인을 구분합니다. 이후 수정은 GitHub 소스와 gh-pages 배포본을 기준으로 진행하고 실제 콘텐츠는 나중에 등록합니다.",
   "roadmap": [
     {
       "step": "화면 디자인 시안",
@@ -68,6 +68,7 @@
     }
   ],
   "done": [
+    "GitHub Pages 실제 배포 성공 확인: 저장소 visibility=public, workflow pages build and deployment #41019140369, gh-pages fa4eb1162abb33657a20ce9dbe1039aa8c331079. build·report-build-status·deploy가 모두 success입니다. https://zooygoo.github.io/shimanami-sake-Public/",
     "최신 통합본 Chromium 포함 자동 시험 89건 통과(실패·건너뜀 0), GitHub 하위 경로 관리자 링크 시험과 .nojekyll 빌드 성공. 소스 4ab5bd0d5ce0cebb99b6f8e6b1378fd495faca80, gh-pages fa4eb11 배포 파일 업로드를 확인했습니다. 웹 주소 활성화 완료는 아닙니다.",
     "사용자가 관리자 확인 화면에서 기존 비밀번호의 정상 로그인을 확인했다고 보고했습니다. 계정·비밀번호 재등록 없이 기존 Google 서버 버전 7을 재사용합니다.",
     "무료 Chrome과 Google 소유자 편집기 연결, 사이트 안 연결 준비 성공과 잘못된 비밀번호의 실제 거부를 확인했습니다.",
@@ -136,11 +137,6 @@
       "text": "관리자 통신 경로가 추가되는 위험 등급 작업입니다. 코드·모의 시험 완료와 실제 Google 반영을 구분하며 PR #12의 사업자 이미지 편집과 통합한 뒤 기존 시트·비밀번호·사진 설정을 보존해야 합니다.",
       "level": "참고",
       "type": "알아둘 것"
-    },
-    {
-      "text": "설정 필요: [7단계] GitHub 저장소 Settings에서 무료 Pages 사용에 필요한 공개 범위를 설정하고 Pages의 Source를 Deploy from a branch, gh-pages / (root)로 저장해 주세요. 이 환경의 GitHub 설정 API는 Forbidden이며 배포 파일 업로드는 완료했습니다.",
-      "level": "중요",
-      "type": "결정할 것"
     }
   ],
   "components": [

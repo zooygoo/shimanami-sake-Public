@@ -379,3 +379,5 @@ data/events.json (배열, 시작일 순)
 - 관리자 HTTP 화면은 현재 /admin/의 상위 경로를 사이트 기준 주소로 사용한다. Google 내부 화면은 기존 미리보기 기본 주소를 유지한다. 새 데이터 칸과 서버 변경은 없다.
 - 현재 저장소 private와 REST/GraphQL 설정 요청 Forbidden을 확인했다. 설정 변경 도구가 없어 마지막 GitHub Pages 활성화·무료 사용 시 저장소 공개 전환은 소유자 설정 화면에서 필요하다. 코드·정적 배포본을 먼저 준비하고, 공개되지 않은 주소를 배포 성공이라고 보고하지 않는다.
 - 시험: GitHub 하위 경로의 관리자에서 사이트 보기 주소·siteBase를 확인하고 기존 통합 시험을 실행한다.
+
+2026-10-30 GitHub Pages 설정 후 확인: 저장소 public, gh-pages fa4eb1162abb33657a20ce9dbe1039aa8c331079의 pages build and deployment 실행 41019140369가 completed/success이며 build·report-build-status·deploy가 모두 성공했다. 공유 주소는 https://zooygoo.github.io/shimanami-sake-Public/, 관리자는 같은 주소의 /admin/이다. 현재 환경의 github.io 직접 접근은 프록시 403으로 차단돼 실제 브라우저 화면·로그인·저장 확인을 배포 성공과 구분한다. Pages 활성화 대기 경고는 해소했다.
