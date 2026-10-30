@@ -17,6 +17,7 @@ function backend() {
  const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],images=new Map(); let email='owner@example.test',clock=Date.now(),imageFailure=false,imageBranch=false,lockDepth=0,checkLoginLock=false;
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
  const range=(rows,r,c,n=1,w=1)=>({
+  getValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>rows[r-1+i]?.[c-1+j]??'')),
   getDisplayValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>String(rows[r-1+i]?.[c-1+j]??''))),
   setRichTextValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v.text;});});},
   setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v;});});}
@@ -64,7 +65,8 @@ async function adminPage(server,token){
  const fixture=await mkdtemp(join(tmpdir(),'sake-admin-flow-'));let client;
  try{
   const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
-  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
+  const logo='data:image/png;base64,'+readFileSync(new URL('../assets/brand/shimanami-logo.png',import.meta.url)).toString('base64');
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
   client=await browser(fixture);
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding',{name:'testRpc'});
@@ -431,12 +433,119 @@ test('legacy view-only statistics distinguish unmeasured clicks from measured ze
  assert.equal(b.rpc({action:'stats',token}).clicks.total,1);
 });
 
+test('dashboard filters every metric by inclusive Japan dates and exclusive end time without writing records',()=>{
+ const b=backend();b.advance(Date.parse('2026-11-01T03:00:00Z')-b.ctx.Date.now());b.setup();const token=b.login(),rows=b.sheets.get('閲覧記録').rows;
+ rows[0].push('action','target');
+ const add=(stamp,page='/',action='view',target='')=>rows.push([stamp,stamp.slice(0,10),page,randomUUID(),action,target]);
+ add('2026-10-31 08:59:59');add('2026-10-31 09:00:00');add('2026-10-31 09:30:00','/makers/omishima-winery/');
+ add('2026-10-31 09:40:00','/','click','experience:'+seed.experiences[0].id);
+ add('2026-10-31 09:50:00','/','click','event:'+seed.events[0].id);
+ add('2026-10-31 09:55:00','/','click','maker:omishima-winery:website');
+ add('2026-10-31 10:00:00');add('2026-11-01 09:00:00');add('2026-11-02 09:00:00');
+ const before=JSON.stringify(rows),stats=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'09:00',endTime:'10:00'});
+ assert.equal(stats.ok,true);assert.deepEqual(stats.dashboard.totals,{views:2,makers:1,experiences:1,events:1});
+ assert.deepEqual(stats.dashboard.daily,[['2026-10-31',2]]);assert.equal(stats.dashboard.hourly[9][1],2);
+ assert.equal(stats.dashboard.hourly.reduce((sum,x)=>sum+x[1],0),2);
+ assert.deepEqual(stats.dashboard.pages,{'/':1,'/makers/omishima-winery/':1});
+ assert.equal(stats.dashboard.links['maker:omishima-winery:website'],1);
+ assert.equal(JSON.stringify(rows),before);
+ const both=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-11-01',startTime:'09:00',endTime:'10:00'});
+ assert.equal(both.dashboard.totals.views,3);assert.deepEqual(both.dashboard.popularDays,[['2026-10-31',2],['2026-11-01',1]]);
+ const empty=b.rpc({action:'stats',token,startDate:'2026-10-01',endDate:'2026-10-01'});
+ assert.deepEqual(empty.dashboard.totals,{views:0,makers:0,experiences:0,events:0});
+ const onlyEnd=b.rpc({action:'stats',token,endDate:'2026-10-01'});assert.equal(onlyEnd.dashboard.totals.views,0);assert.equal(onlyEnd.dashboard.range.startDate,'2026-10-01');
+ const onlyStart=b.rpc({action:'stats',token,startDate:'2026-11-02'});assert.equal(onlyStart.dashboard.totals.views,0);assert.equal(onlyStart.dashboard.range.endDate,'2026-11-02');
+});
+
+test('dashboard accepts Sheets dates and serials, rejects invalid rows and preserves unmeasured clicks',()=>{
+ const b=backend();b.advance(Date.parse('2026-11-01T03:00:00Z')-b.ctx.Date.now());b.setup();const token=b.login(),rows=b.sheets.get('閲覧記録').rows;
+ const day=(Date.UTC(2026,9,31)-Date.UTC(1899,11,30))/86400000;
+ rows.push([new Date('2026-10-31T00:00:00Z'),new Date('2026-10-30T15:00:00Z'),'/',randomUUID()]);
+ rows.push([day+9/24,day,'/makers/omishima-winery/',randomUUID()]);
+ rows.push(['2026/10/31 09:30:00','2026/10/31','/',randomUUID()]);
+ for(const row of [['2026-02-30 09:00:00','2026-02-30'],['2026-10-31 25:00:00','2026-10-31'],['2026-11-01 13:00:00','2026-11-01']])rows.push([...row,'/',randomUUID()]);
+ rows.push(['2026-10-31 09:00:00','2026-10-31','/admin/',randomUUID()]);
+ const stats=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'09:00',endTime:'10:00'});
+ assert.equal(stats.ok,true);assert.equal(stats.dashboard.totals.views,3);assert.equal(stats.dashboard.totals.experiences,null);assert.equal(stats.dashboard.totals.events,null);
+ assert.equal(stats.dashboard.hourly[9][1],3);assert.equal(stats.dashboard.skipped,4);assert.equal(stats.clicksMeasured,false);
+});
+
+test('dashboard rejects invalid and reversed filters on the authenticated server',()=>{
+ const b=backend();b.setup();const token=b.login();
+ for(const filters of [{startDate:'2026-02-30'},{startDate:'2026-10-31',endDate:'2026-10-01'},{startTime:'10:00',endTime:'09:00'},{startTime:'24:00'},{endTime:'25:00'},{startDate:[]},{endDate:'<script>'}])assert.equal(b.rpc({action:'stats',token,...filters}).ok,false,JSON.stringify(filters));
+ assert.equal(b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'00:00',endTime:'24:00'}).ok,true);
+});
+
+test('dashboard browser supports one day, presets, empty ranges, retry and responsive accessible charts',async()=>{
+ const server=backend();server.advance(Date.parse('2026-11-01T03:00:00Z')-server.ctx.Date.now());server.setup();
+ const rows=server.sheets.get('閲覧記録').rows;rows[0].push('action','target');
+ rows.push(['2026-10-31 09:00:00','2026-10-31','/',randomUUID(),'view','']);
+ rows.push(['2026-10-31 10:00:00','2026-10-31','/makers/omishima-winery/',randomUUID(),'view','']);
+ rows.push(['2026-10-31 10:05:00','2026-10-31','/',randomUUID(),'click','experience:'+seed.experiences[0].id]);
+ rows.push(['2026-11-01 09:00:00','2026-11-01','/',randomUUID(),'view','']);
+ let fail=false,calls=0;const originalRpc=server.rpc;server.rpc=request=>{if(request.action==='stats'){calls++;if(fail)return {ok:false,error:'統計を読み込めませんでした。'};}return originalRpc(request);};
+ const {client,waitFor,close}=await adminPage(server,server.login());
+ try{
+  await client.evaluate("document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content svg[role=img]').length"),2);
+  await client.evaluate("document.getElementById('stats-start').value='2026-10-31';document.getElementById('stats-end').value='2026-10-31';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='2回'");
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=makers]').textContent"),'1回');
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=experiences]').textContent"),'1回');
+  for(const width of [360,390,1366]){
+   await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await client.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+   assert.equal(await client.evaluate("[...document.querySelectorAll('#stats-filter input,#stats-filter select,#stats-filter button')].every(x=>x.getBoundingClientRect().height>=44)"),true);
+   await client.evaluate("document.getElementById('stats-apply').focus()");
+   assert.equal(await client.evaluate("document.activeElement.id"),'stats-apply');
+   if(width!==360)await client.screenshot('/tmp/admin-analytics-'+width+'.png',true);
+  }
+  await client.evaluate("document.getElementById('stats-from').value='10:00';document.getElementById('stats-to').value='11:00';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=makers]').textContent"),'1回');
+  const before=calls;
+  await client.evaluate("document.getElementById('stats-start').value='2026-11-01';document.getElementById('stats-end').value='2026-10-31';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.getElementById('stats-message').textContent.includes('終了日')");assert.equal(calls,before);
+  await client.evaluate("document.querySelector('[data-stats-period=today]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  assert.equal(await client.evaluate("document.getElementById('stats-from').value"),'00:00');
+  await client.evaluate("document.querySelector('[data-stats-period=week]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  await client.evaluate("document.querySelector('[data-stats-period=month]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  await client.evaluate("document.querySelector('[data-section=makers]').click();document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  await client.evaluate("document.getElementById('stats-start').value='2026-10-01';document.getElementById('stats-end').value='2026-10-01';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='0回'");
+  fail=true;await client.evaluate("document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.getElementById('stats-message').textContent.includes('読み込めません')");
+  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content [data-metric]').length"),0);
+  fail=false;await client.evaluate("document.querySelector('[data-stats-period=all]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  const stats=server.rpc({action:'stats',token:await client.evaluate("sessionStorage.getItem('shimanami.admin.session')")});
+  await client.evaluate("window.originalStatsRpc=rpc;window.delayedStats=[];rpc=request=>request.action==='stats'?new Promise(resolve=>window.delayedStats.push(resolve)):window.originalStatsRpc(request);document.getElementById('stats-filter').requestSubmit();document.getElementById('stats-filter').requestSubmit()");
+  assert.equal(await client.evaluate('window.delayedStats.length'),1,'repeated submits must not start parallel reads');
+  await client.evaluate("document.querySelector('[data-section=makers]').click();document.querySelector('[data-section=stats]').click()");
+  await client.evaluate(`window.delayedStats[1](${JSON.stringify(stats)})`);
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  const stale=structuredClone(stats);stale.dashboard.totals.views=999;
+  await client.evaluate(`window.delayedStats[0](${JSON.stringify(stale)})`);
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=views]').textContent"),'3回','an older response must not replace the latest range');
+  await client.evaluate("document.getElementById('stats-filter').requestSubmit();document.getElementById('logout').click()");
+  await waitFor("document.getElementById('workspace').hidden");
+  await client.evaluate(`window.delayedStats[2](${JSON.stringify(stats)})`);
+  assert.equal(await client.evaluate("document.getElementById('stats-content').childElementCount"),0,'a late response after logout must stay hidden');
+ }finally{await close();}
+});
+
 test('browser labels legacy click statistics as unmeasured while keeping view totals',async()=>{
  const server=backend();server.setup();const {client,waitFor,close}=await adminPage(server,server.login());
  try{
   await client.evaluate("document.querySelector('[data-section=stats]').click()");
   await waitFor("document.getElementById('stats-content').textContent.includes('未計測')");
-  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content table').length"),2);
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=experiences]').textContent"),'未計測');
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=events]').textContent"),'未計測');
   assert.equal(await client.evaluate("document.getElementById('stats-content').textContent.includes('今月の閲覧数')"),true);
  }finally{await close();}
 });

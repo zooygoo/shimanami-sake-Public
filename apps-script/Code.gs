@@ -102,7 +102,7 @@ function rpc(request){
     if(request.action==='save')return save_(request);
     if(request.action==='upload')return uploadPhoto_(request);
     if(request.action==='photo')return {ok:true,base64:photoContent_(request.path)};
-    if(request.action==='stats')return statistics_();
+    if(request.action==='stats')return statistics_(request);
     throw new Error('操作が正しくありません。');
   }catch(error){return {ok:false,error:error.message};}
 }
@@ -135,19 +135,63 @@ function externalTargets_(){
   readCollection_('experiences').forEach(function(x){if(https(x.booking_url))targets.push('experience:'+x.id);});
   readCollection_('events').forEach(function(x){if(https(x.url))targets.push('event:'+x.id);});return targets;
 }
-function statistics_(){
+function statisticsDate_(value){
+  var text=String(value),match=/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/.exec(text);
+  if(!match)return '';
+  var day=match[1]+'-'+('0'+match[2]).slice(-2)+'-'+('0'+match[3]).slice(-2),date=new Date(day+'T00:00:00Z');
+  return !isNaN(date.getTime())&&date.toISOString().slice(0,10)===day?day:'';
+}
+function statisticsCell_(value,timestamp){
+  if(Object.prototype.toString.call(value)==='[object Date]')return isNaN(value.getTime())?'':Utilities.formatDate(value,'Asia/Tokyo',timestamp?'yyyy-MM-dd HH:mm:ss':'yyyy-MM-dd');
+  if(typeof value==='number'){
+    // Sheets serials are local wall time. Round once to seconds before extracting boundaries.
+    var local=new Date(Date.UTC(1899,11,30)+Math.round(value*86400)*1000);
+    if(isNaN(local.getTime()))return '';
+    return local.toISOString().slice(0,timestamp?19:10).replace('T',' ');
+  }
+  return String(value||'').trim();
+}
+function statisticsTime_(value,end){
+  if(typeof value!=='string'||!/^\d{2}:\d{2}$/.test(value))throw new Error('時刻は00:00〜24:00で入力してください。');
+  var parts=value.split(':'),hour=Number(parts[0]),minute=Number(parts[1]);
+  if(minute>59||hour>23&&!(end&&hour===24&&minute===0))throw new Error('時刻は00:00〜24:00で入力してください。');
+  return hour*3600+minute*60;
+}
+function statistics_(request){
+  request=request||{};
+  var startDate=request.startDate===undefined?'':request.startDate,endDate=request.endDate===undefined?'':request.endDate,startTime=request.startTime===undefined?'00:00':request.startTime,endTime=request.endTime===undefined?'24:00':request.endTime;
+  [startDate,endDate].forEach(function(day){if(typeof day!=='string'||day&&(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!statisticsDate_(day)))throw new Error('日付を正しく入力してください。');});
+  if(startDate&&endDate&&startDate>endDate)throw new Error('終了日は開始日以降にしてください。');
+  var startSeconds=statisticsTime_(startTime,false),endSeconds=statisticsTime_(endTime,true);
+  if(startSeconds>=endSeconds)throw new Error('終了時刻は開始時刻より後にしてください。');
   var sheet=database_().getSheetByName('閲覧記録');if(!sheet)throw new Error('閲覧記録シートがありません。');
   var headers=sheet.getRange(1,1,1,6).getDisplayValues()[0],clicksMeasured=headers[4]==='action'&&headers[5]==='target';
-  var rows=sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,6).getDisplayValues():[];
-  var today=Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),fromMonth=today.slice(0,7)+'-01',byPage=Object.create(null),byLink=Object.create(null),counts={today:0,week:0,month:0,total:0},clicks={today:0,month:0,total:0};
+  var rows=sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,6).getValues():[];
+  var now=new Date(),today=Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),fromMonth=today.slice(0,7)+'-01',byPage=Object.create(null),byLink=Object.create(null),counts={today:0,week:0,month:0,total:0},clicks={today:0,month:0,total:0};
+  var pages=Object.create(null),links=Object.create(null),daily=Object.create(null),hourly=Array.apply(null,Array(24)).map(function(_,hour){return [('0'+hour).slice(-2)+':00',0];}),totals={views:0,makers:0,experiences:clicksMeasured?0:null,events:clicksMeasured?0:null},earliest=today,skipped=0;
+  var allowedPages=['/'].concat(readCollection_('makers').map(function(x){return '/makers/'+x.id+'/';}));
   rows.forEach(function(row){
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(row[1])||row[1]>today)return;
-    if(row[4]&&row[4]!=='view'&&row[4]!=='click')return;
+    var day=statisticsDate_(statisticsCell_(row[1],false)),stamp=statisticsCell_(row[0],true),time=/^(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(stamp);
+    if(!day||day>today||!time||statisticsDate_(time[1])!==day||Number(time[2])>23||Number(time[3])>59||Number(time[4]||0)>59||row[4]&&row[4]!=='view'&&row[4]!=='click'||allowedPages.indexOf(row[2])<0){skipped++;return;}
+    var seconds=Number(time[2])*3600+Number(time[3])*60+Number(time[4]||0),instant=new Date(day+'T'+('0'+time[2]).slice(-2)+':'+time[3]+':'+(time[4]||'00')+'+09:00');
+    if(instant.getTime()>now.getTime()){skipped++;return;}
+    if(day<earliest)earliest=day;
     var click=row[4]==='click',group=click?clicks:counts;group.total++;
-    if(row[1]===today)group.today++;if(row[1]>=fromMonth)group.month++;
+    if(day===today)group.today++;if(day>=fromMonth)group.month++;
     if(click)byLink[row[5]]=(byLink[row[5]]||0)+1;
-    else{if(row[1]>=from7)counts.week++;byPage[row[2]]=(byPage[row[2]]||0)+1;}
-  });return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink,clicksMeasured:clicksMeasured};
+    else{if(day>=from7)counts.week++;byPage[row[2]]=(byPage[row[2]]||0)+1;}
+    if(startDate&&day<startDate||endDate&&day>endDate||seconds<startSeconds||seconds>=endSeconds)return;
+    if(click){
+      links[row[5]]=(links[row[5]]||0)+1;
+      if(clicksMeasured&&/^experience:/.test(row[5]))totals.experiences++;
+      if(clicksMeasured&&/^event:/.test(row[5]))totals.events++;
+    }else{
+      totals.views++;if(row[2]!=='/')totals.makers++;
+      pages[row[2]]=(pages[row[2]]||0)+1;daily[day]=(daily[day]||0)+1;hourly[Math.floor(seconds/3600)][1]++;
+    }
+  });
+  var days=Object.keys(daily).sort().map(function(day){return [day,daily[day]];});
+  return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink,clicksMeasured:clicksMeasured,dashboard:{today:today,earliest:earliest,range:{startDate:startDate||(endDate&&endDate<earliest?endDate:earliest),endDate:endDate||(startDate&&startDate>today?startDate:today),startTime:startTime,endTime:endTime},totals:totals,pages:pages,links:links,daily:days,hourly:hourly,popularDays:days.slice().sort(function(a,b){return b[1]-a[1]||a[0].localeCompare(b[0]);}),skipped:skipped}};
 }
 function doPost(event){var result;try{configure_();if(!event.postData||event.postData.contents.length>2048)throw new Error('Request size');result=recordView_(JSON.parse(event.postData.contents));}catch(error){result={ok:false,error:'リクエストが正しくありません。'};}return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);}
 function doGet(event){
