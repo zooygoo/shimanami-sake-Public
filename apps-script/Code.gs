@@ -25,7 +25,11 @@ function readCollection_(kind){
   if(JSON.stringify(values[0])!==JSON.stringify(expected))throw new Error('保存先の列が一致しません。');
   return values.slice(1).filter(function(row){return row[0];}).map(function(row){var record={};def.fields.forEach(function(key,i){var value=row[i];record[key]=['photos','sns'].indexOf(key)>=0?JSON.parse(value||'[]'):key==='sample'?String(value).toLowerCase()==='true':key==='order'?Number(value):['lat','lng'].indexOf(key)>=0?(value===''?null:Number(value)):value;});return record;});
 }
-function publicData_(withImages){var data={};['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){validate_(kind,record);if(withImages&&photoPath_(record.photo)){try{record.photo='data:image/jpeg;base64,'+photoContent_(record.photo);}catch(error){record.photo='';}}return record;});});return data;}
+function publicData_(withImages){
+  var data={},images=Object.create(null);
+  function resolveImage(path){if(!withImages||!photoPath_(path))return path;if(!Object.prototype.hasOwnProperty.call(images,path)){try{images[path]='data:image/jpeg;base64,'+photoContent_(path);}catch(error){images[path]='';}}return images[path];}
+  ['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){validate_(kind,record);if(kind==='makers'){record.logo=resolveImage(record.logo);record.photos=record.photos.map(resolveImage).filter(Boolean);}else record.photo=resolveImage(record.photo);return record;});});return data;
+}
 function validate_(kind,input){
   var def=definition_(kind);
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(function(k){return def.fields.indexOf(k)<0;})||def.fields.some(function(k){return !Object.prototype.hasOwnProperty.call(input,k);}))throw new Error('入力項目が正しくありません。');
@@ -33,6 +37,10 @@ function validate_(kind,input){
   def.fields.forEach(function(k){var value=input[k];if(['photos','sns'].indexOf(k)>=0){if(!Array.isArray(value))throw new Error('配列の項目が正しくありません。');}else if(k==='sample'){if(typeof value!=='boolean')throw new Error('表示例の指定が正しくありません。');}else if(k==='order'){if(!Number.isSafeInteger(value)||value<1)throw new Error('表示順を確認してください。');}else if(k==='lat'||k==='lng'){if(value!==null&&(typeof value!=='number'||!isFinite(value)))throw new Error('座標を確認してください。');}else if(typeof value!=='string'||value.length>10000)throw new Error('文字数または入力形式を確認してください。');});
   if(!(kind==='makers'?input.name:input.title).trim())throw new Error('名前またはタイトルを入力してください。');
   if(kind==='makers'&&['日本酒','ビール','ワイン','リキュール'].indexOf(input.kind)<0)throw new Error('種類を確認してください。');
+  if(kind==='makers'){
+    function makerImage(path){return typeof path==='string'&&(/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(path)||photoPath_(path)&&path.indexOf('uploads/makers/')===0);}
+    if(input.logo&&!makerImage(input.logo)||input.photos.length>6||input.photos.some(function(path){return !makerImage(path);}))throw new Error('ロゴと写真の指定を確認してください。写真は6枚まで登録できます。');
+  }
   if(kind==='experiences'&&['見学','ペアリング','ガイド','診断','周遊'].indexOf(input.category)<0)throw new Error('種類を確認してください。');
   if(input.photo&&!/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(input.photo)&&!(photoPath_(input.photo)&&input.photo.indexOf('uploads/'+kind+'/')===0))throw new Error('写真の指定が正しくありません。');
   if(kind==='events'){
@@ -53,12 +61,16 @@ function save_(request){
     if(request.create===true&&index>=0)throw new Error('このIDはすでに使われています。別のIDを入力してください。');
     if(request.collection==='makers'){
       if(index<0)throw new Error('登録済みの造り手を選んでください。');
-      ['logo','photos','lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('写真と座標はこの画面では変更できません。');});
+      ['lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('座標はこの画面では変更できません。');});
     }
     if(request.collection==='experiences'&&record.maker_id&&!readCollection_('makers').some(function(x){return x.id===record.maker_id;}))throw new Error('関連する造り手を確認してください。');
     var sheet=database_().getSheetByName(def.name),lastRow=sheet.getLastRow();
     var row=index<0?lastRow+1:sheet.getRange(2,1,lastRow-1,1).getDisplayValues().findIndex(function(value){return value[0]===record.id;})+2;
     if(photoPath_(record.photo)&&(index<0||records[index].photo!==record.photo))photoContent_(record.photo);
+    if(request.collection==='makers'){
+      var previous=[records[index].logo].concat(records[index].photos),checked=Object.create(null);
+      [record.logo].concat(record.photos).forEach(function(path){if(photoPath_(path)&&previous.indexOf(path)<0&&!checked[path]){photoContent_(path);checked[path]=true;}});
+    }
     if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
     // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
     sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(k){var value=record[k];return SpreadsheetApp.newRichTextValue().setText(value===null?'':typeof value==='object'?JSON.stringify(value):String(value)).build();})]);
