@@ -87,7 +87,7 @@
   ],
   "warnings": [
     {
-      "text": "설정 필요: [4단계] 무료 Browser 제어가 가능한 Work 환경에서 기존 Google 소유자 계정으로 Apps Script 프로젝트를 열어 서버 갱신을 이어갈 수 있게 연결해 주세요. 현재 환경에는 해당 브라우저 조작·배포 도구가 없어 실제 /admin/ 전환은 아직 반영하지 않았습니다.",
+      "text": "설정 필요: [4단계] 무료 Browser 제어가 가능한 Work 환경에서 기존 Google 소유자 계정으로 Apps Script 편집기를 열어 주세요. 실제 admin-bootstrap 요청이 아직 HTML을 반환해 새 API가 미반영임을 확인했으며, 서버 갱신 뒤 사이트 /admin/ 전환을 이어갑니다.",
       "level": "중요",
       "type": "결정할 것"
     },
