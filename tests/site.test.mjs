@@ -112,7 +112,9 @@ test('production CSS preserves the approved CSS except documented fit and overfl
   assert.equal(css, built);
   const mockup = await readFile(join(source,'docs/mockups/site-v1.html'),'utf8');
   const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').replace(/^\.foot small\{[^\n]*\}\n/m,'').trim().replace('grid-template-columns:320px minmax(0,1fr) 220px','grid-template-columns:320px minmax(0,1fr)').split('\n').filter(line=>!line.includes('.e-side')).join('\n').replace('.e-desc{','.e-main > .btn{justify-self:start;margin-top:8px}\n.e-desc{');
-  assert.ok(css.startsWith(approved), 'approved CSS stays verbatim before functional additions');
+  // The 2026-10-31 request replaces only the maker logo sizing and mobile row rules.
+  const withoutMakerLayout=value=>value.split('\n').filter(line=>!/^\s*(?:\/\* makers:|\.(?:row5|maker(?:,|\{|:)|m-vis(?: |\{)))/.test(line)).join('\n');
+  assert.ok(withoutMakerLayout(css).startsWith(withoutMakerLayout(approved)), 'other approved CSS stays verbatim before functional additions');
   for (const token of ['--blue:#00508E','--blue-deep:#003F72','--ink:#102A43','--muted:#566B80','--line:#D5E0EA','--sea:#EAF2F8','--ended:#8A99A8','Noto Sans JP','max-width:1240px','repeat(5,minmax(0,1fr))']) assert.ok(css.includes(token), token);
   assert.doesNotMatch(css, /\.switch|box-shadow/);
 });
