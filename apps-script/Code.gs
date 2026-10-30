@@ -193,10 +193,31 @@ function statistics_(request){
   var days=Object.keys(daily).sort().map(function(day){return [day,daily[day]];});
   return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink,clicksMeasured:clicksMeasured,dashboard:{today:today,earliest:earliest,range:{startDate:startDate||(endDate&&endDate<earliest?endDate:earliest),endDate:endDate||(startDate&&startDate>today?startDate:today),startTime:startTime,endTime:endTime},totals:totals,pages:pages,links:links,daily:days,hourly:hourly,popularDays:days.slice().sort(function(a,b){return b[1]-a[1]||a[0].localeCompare(b[0]);}),skipped:skipped}};
 }
-function doPost(event){var result;try{configure_();if(!event.postData||event.postData.contents.length>2048)throw new Error('Request size');result=recordView_(JSON.parse(event.postData.contents));}catch(error){result={ok:false,error:'リクエストが正しくありません。'};}return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);}
+function doPost(event){
+  var result;
+  try{
+    configure_();
+    if(!event||!event.postData||typeof event.postData.contents!=='string'||event.postData.contents.length>400000)throw new Error('Request size');
+    var request=JSON.parse(event.postData.contents);
+    if(!request||typeof request!=='object'||Array.isArray(request))throw new Error('Request format');
+    if(Object.prototype.hasOwnProperty.call(request,'api')){
+      if(request.api!=='admin-v1'||['login','logout','load','save','upload','photo','stats'].indexOf(request.action)<0)throw new Error('Admin operation');
+      // Initial password setup remains restricted to the owner's Google-hosted screen.
+      result=rpc(request);
+    }else{
+      if(event.postData.contents.length>2048)throw new Error('Request size');
+      result=recordView_(request);
+    }
+  }catch(error){result={ok:false,error:'リクエストが正しくありません。'};}
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
 function doGet(event){
   configure_();
   var params=event&&event.parameter||{};
+  if(params.action==='admin-bootstrap'){
+    var settings=properties_();
+    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('GITHUB_IMAGE_TOKEN'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
+  }
   if(params.action==='public'){
     if(!/^__sakeData_[a-z0-9]+$/.test(params.callback||''))return ContentService.createTextOutput('{}').setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(params.callback+'('+JSON.stringify(publicData_(true)).replace(/</g,'\\u003c')+');').setMimeType(ContentService.MimeType.JAVASCRIPT);
