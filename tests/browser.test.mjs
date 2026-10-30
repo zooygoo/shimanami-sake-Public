@@ -28,6 +28,24 @@ test('browser: approved hero content fits the first viewport at 390 and 1366', a
     assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.hero')).backgroundColor"), 'rgb(0, 80, 142)');
   }
 });
+test('browser: mobile maker logos fit equal compact panels after loading and every swipe',async()=>{
+ for(const width of [360,390,402,430]){
+  await b.open(home,width,874);
+  await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
+  for(let index=0;index<5;index++){
+   const layout=await b.evaluate(`(() => {const row=document.querySelector('.row5'),card=row.children[${index}];row.scrollLeft=card.offsetLeft-row.firstElementChild.offsetLeft;const panel=card.querySelector('.m-vis').getBoundingClientRect(),image=card.querySelector('img').getBoundingClientRect(),body=card.querySelector('.m-body').getBoundingClientRect(),bounds=card.getBoundingClientRect();return {height:panel.height,cardHeight:bounds.height,bodyTop:body.top,panelBottom:panel.bottom,contained:image.left>=panel.left&&image.right<=panel.right&&image.top>=panel.top&&image.bottom<=panel.bottom,allHeights:[...row.children].map(x=>x.querySelector('.m-vis').getBoundingClientRect().height)};})()`);
+   assert.equal(layout.height,144,`${width}px card ${index} has a fixed compact logo panel`);
+   assert.ok(layout.allHeights.every(height=>Math.abs(height-layout.height)<1),'all logos use the same panel height');
+   assert.ok(layout.cardHeight<=360,`${width}px card ${index} is compact: ${layout.cardHeight}`);
+   assert.ok(layout.contained,`${width}px card ${index} logo stays inside its own panel`);
+   assert.equal(layout.bodyTop,layout.panelBottom,'the blue border begins directly below the logo panel');
+  }
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+  await b.evaluate("document.querySelector('.mnav a[href$=\"#makers\"]').click()");
+  const anchor=await b.evaluate("({title:document.querySelector('#makers h2').getBoundingClientRect().top,header:document.querySelector('.site-head').getBoundingClientRect().bottom})");
+  assert.ok(anchor.title>=anchor.header,`${width}px navigation must leave the title visible`);
+ }
+});
 test('browser: a failed Google connection keeps both hero buttons fully visible without changing the approved layout',async()=>{
   for(const width of [390,1366]){
     await b.open(home,width,width===390?900:768);
