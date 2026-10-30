@@ -739,3 +739,26 @@ test('site admin browser refuses old servers, recovers connection failures and k
   assert.equal(await client.evaluate("document.getElementById('confirm-field').hidden"),true,'site must not offer password initialization');
  }finally{await page.close();}
 });
+
+test('event registration needs no typed ID, uses one date and preserves identity across draft changes',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=events]').click();document.getElementById('add').click()");
+  const id=await client.evaluate("document.getElementById('input-id').value");
+  assert.match(id,/^event-[0-9a-f-]{36}$/);
+  assert.equal(await client.evaluate("document.getElementById('input-id').type"),'hidden');
+  assert.equal(await client.evaluate("document.getElementById('input-sample').labels[0].textContent"),'サイトに公開する');
+  await client.evaluate("document.getElementById('input-title').value='公開する地域イベント';document.getElementById('input-start_date').value='2099-02-01';document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.getElementById('review').open"),true);
+  assert.equal(await client.evaluate("document.getElementById('review-fields').textContent.includes('管理用ID')"),false);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+  let saved=server.rpc({action:'load',token}).data.events.find(x=>x.id===id);
+  assert.equal(saved.end_date,saved.start_date);assert.equal(saved.sample,false);
+  const render=()=>{const d=server.ctx.publicData_();return renderPages(d.makers,d.experiences,d.events).get('index.html');};
+  assert.ok(render().includes(saved.title));
+  await client.evaluate("document.getElementById('input-sample').checked=false;document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  saved=server.rpc({action:'load',token}).data.events.find(x=>x.id===id);assert.equal(saved.sample,true);assert.ok(!render().includes(saved.title));
+  await client.evaluate("document.getElementById('input-sample').checked=true;document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.ok(render().includes(saved.title));assert.equal(server.rpc({action:'load',token}).data.events.at(-1).id,id);
+ }finally{await page.close();}
+});
