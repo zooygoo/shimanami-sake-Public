@@ -783,3 +783,32 @@ test('experience page and booking toggles persist independently without losing t
   }
  }finally{await page.close();}
 });
+
+test('publishing an old experience with a placeholder booking link saves and appears after reloading',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=experiences]').click();document.getElementById('input-sample').checked=true;document.getElementById('input-booking_label').checked=false;document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(page.saves.length,1);assert.equal(page.saves[0].result.ok,true,JSON.stringify(page.saves[0].result));
+  const d=server.rpc({action:'load',token}).data,record=d.experiences[0];
+  assert.equal(record.sample,false);assert.equal(record.booking_url,'');assert.equal(record.booking_label,'非表示');
+  for(const key of ['price','duration','schedule','place'])assert.equal(record[key],seed.experiences[0][key]);
+  assert.equal(await client.evaluate("document.getElementById('input-sample').checked"),true);
+  assert.equal(await client.evaluate("document.getElementById('input-booking_label').checked"),false);
+  const pages=renderPages(d.makers,d.experiences,d.events);
+  for(const path of ['index.html','makers/'+record.maker_id+'/index.html'])assert.ok(pages.get(path).includes(record.title));
+ }finally{await page.close();}
+});
+test('experience form and review omit price and logistics while new registrations remain server-compatible',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=experiences]').click();document.getElementById('add').click();document.getElementById('input-title').value='リンク中心の新しい体験';document.getElementById('input-booking_url').value='https://booking.example.test/new'");
+  for(const key of ['price','duration','schedule','place'])assert.equal(await client.evaluate(`Boolean(document.getElementById('input-${key}'))`),false,key);
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("/料金|所要時間|開催|場所/.test(document.getElementById('review-fields').textContent)"),false);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(page.saves.at(-1).result.ok,true);const record=server.rpc({action:'load',token}).data.experiences.at(-1);
+  for(const key of ['price','duration','schedule','place'])assert.equal(record[key],'');
+  assert.equal(record.booking_url,'https://booking.example.test/new');assert.equal(record.sample,false);
+ }finally{await page.close();}
+});
