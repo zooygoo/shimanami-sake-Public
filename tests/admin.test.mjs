@@ -302,6 +302,71 @@ test('photo uploads require a session and server credential, stay in the image b
  assert.equal(b.rpc({action:'load',token}).data.events[0].photo,uploaded.path);assert.equal(b.ctx.publicData_(true).events[0].photo,'');
 });
 
+test('maker media persists in existing columns and resolves publicly without exposing credentials',()=>{
+ const b=backend();b.setup();const token=b.login();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ const before=structuredClone([...b.sheets].map(([name,sheet])=>[name,sheet.rows]));
+ const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
+ assert.equal(b.rpc({action:'upload',collection:'makers',base64}).ok,false);
+ const uploaded=b.rpc({action:'upload',collection:'makers',token,base64});
+ assert.equal(uploaded.ok,true);assert.match(uploaded.path,/^uploads\/makers\/[a-f0-9]{64}\.jpg$/);
+ const record={...seed.makers[0],logo:uploaded.path,photos:[uploaded.path,'photos/winery-tanks.jpg']};
+ assert.deepEqual(b.rpc({action:'save',collection:'makers',token,record,revision:0}),{ok:true,revision:1});
+ assert.deepEqual(b.rpc({action:'load',token}).data.makers[0],record);
+ const snapshot=JSON.parse(JSON.stringify(b.ctx.publicData_(true)));
+ assert.equal(snapshot.makers[0].logo,'data:image/jpeg;base64,'+base64);
+ assert.deepEqual(snapshot.makers[0].photos,['data:image/jpeg;base64,'+base64,'photos/winery-tanks.jpg']);
+ assert.ok(!JSON.stringify(snapshot).includes('test-only-secret'));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows[0]),JSON.stringify(before[0][1][0]));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows.slice(2)),JSON.stringify(before[0][1].slice(2)));
+ assert.equal(JSON.stringify(b.sheets.get('体験').rows),JSON.stringify(before[1][1]));assert.equal(JSON.stringify(b.sheets.get('イベント').rows),JSON.stringify(before[2][1]));
+ b.setImageFailure(true);
+ assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,description:'障害中の文章変更',photos:[...record.photos].reverse()},revision:1}).ok,true);
+ assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,logo:'',photos:[]},revision:2}).ok,true);
+ assert.equal(b.images.size,1,'removing display never deletes the stored image');
+});
+test('maker media rejects invalid paths, missing files, excess photos and coordinate changes without writes',()=>{
+ const b=backend();b.setup();const token=b.login(),record=seed.makers[0],before=structuredClone(b.sheets.get('造り手').rows);
+ const invalid=[{logo:'https://evil.test/logo.jpg'},{logo:'../private.jpg'},{logo:'uploads/events/'+'a'.repeat(64)+'.jpg'},{logo:'uploads/makers/'+'a'.repeat(64)+'.jpg'},{photos:[{}]},{photos:['javascript:alert(1)']},{photos:Array(7).fill('photos/winery-tanks.jpg')},{lat:1}];
+ for(const fields of invalid)assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,...fields},revision:0}).ok,false,JSON.stringify(fields));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows),JSON.stringify(before));assert.equal(b.props.get('REVISION'),undefined);
+});
+test('maker media editor uploads only on save, retains a failed selection and persists order and removals',async()=>{
+ const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
+ const {client,saves,waitFor,close}=await adminPage(server,token);
+ try{
+  const base64=readFileSync(new URL('../assets/makers/omishima-brewery.png',import.meta.url)).toString('base64');
+  async function choose(selector){await client.evaluate(`(()=>{const bytes=Uint8Array.from(atob(${JSON.stringify(base64)}),c=>c.charCodeAt(0)),transfer=new DataTransfer();transfer.items.add(new File([bytes],'test-logo.png',{type:'image/png'}));const input=document.querySelector(${JSON.stringify(selector)});input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);await waitFor("!document.getElementById('save').disabled");}
+  await choose('#input-logo input[type=file]');
+  assert.equal(server.imageRequests.length,0,'selecting an image must not upload');
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.querySelector('#review-fields .logo-preview').src.startsWith('data:image/jpeg;base64,')"),true);
+  await client.evaluate("document.getElementById('review-back').click()");
+  server.setImageFailure(true);
+  await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,0);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
+  server.setImageFailure(false);
+  await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.at(-1).result.ok,true);assert.match(server.rpc({action:'load',token}).data.makers[0].logo,/^uploads\/makers\//);
+  await client.evaluate("[...document.querySelectorAll('#input-logo button')].find(x=>x.textContent==='元のロゴに戻す').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(server.rpc({action:'load',token}).data.makers[0].logo,seed.makers[0].logo);
+  const winery=seed.makers.findIndex(x=>x.id==='omishima-winery');
+  await client.evaluate(`document.getElementById('record').value=${JSON.stringify(String(winery))};document.getElementById('record').dispatchEvent(new Event('change'))`);
+  await client.evaluate("[...document.querySelectorAll('#input-photos .maker-media-row')][1].querySelectorAll('button')[2].click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  const expected=[...seed.makers[winery].photos];[expected[0],expected[1]]=[expected[1],expected[0]];
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected);
+  await client.evaluate("document.querySelector('#input-photos .maker-media-row button:nth-child(2)').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected.slice(1));
+  await choose('#input-photos > input[type=file]');
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.querySelectorAll('#review-fields img').length"),5);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("!document.getElementById('save').disabled");
+  const added=server.rpc({action:'load',token}).data.makers[winery].photos;
+  assert.equal(added.length,4);assert.deepEqual(added.slice(0,3),expected.slice(1));assert.match(added[3],/^uploads\/makers\//);
+  await client.evaluate("document.querySelector('[data-section=experiences]').click()");
+  assert.equal(await client.evaluate("document.getElementById('input-maker_id').tagName"),'SELECT');
+  assert.equal(await client.evaluate("document.getElementById('input-maker_id').options.length"),6);
+ }finally{await close();}
+});
 test('the legacy event sheet gains only the trailing photo header when an authenticated save succeeds',()=>{
  const b=backend(),sheet=b.sheets.get('イベント');if(sheet.rows[0].at(-1)==='photo')sheet.rows.forEach(row=>row.pop());
  b.setup();const token=b.login();const loaded=b.rpc({action:'load',token});assert.equal(loaded.ok,true);assert.equal(loaded.data.events[0].photo,'');
