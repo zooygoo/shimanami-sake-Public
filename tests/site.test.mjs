@@ -1,4 +1,5 @@
 import { test, before, after } from 'node:test';
+import {renderPages} from '../scripts/site-render.mjs';
 import assert from 'node:assert/strict';
 import { readFile, mkdtemp, cp, writeFile, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -9,12 +10,13 @@ const source = fileURLToPath(new URL('../', import.meta.url));
 let root;
 const read = path => readFile(join(root, path), 'utf8');
 const json = async path => JSON.parse(await read(path));
-let home, makers, experiences, events;
+let home, publishedHome, makers, experiences, events;
 before(async () => {
   root = await mkdtemp(join(tmpdir(),'sake-tests-'));
   for (const p of ['scripts','data','assets','apps-script','package.json']) await cp(join(source,p),join(root,p),{recursive:true});
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root });
   [home, makers, experiences, events] = await Promise.all([read('dist/index.html'), json('data/makers.json'), json('data/experiences.json'), json('data/events.json')]);
+  publishedHome=renderPages(makers,experiences.map(x=>({...x,sample:false})),events.map(x=>({...x,sample:false}))).get('index.html');
 });
 after(async () => { if(root) await rm(root,{recursive:true,force:true}); });
 test('package scripts use Node only and have no dependencies', async () => {
@@ -47,12 +49,13 @@ test('data uses only the planned fields and asset paths', async () => {
 test('all mockup experiences and events are marked as samples', () => {
   assert.equal(experiences.length, 5); assert.equal(events.length, 4);
   assert.ok([...experiences, ...events].every(x => x.sample === true));
-  for (const x of experiences) assert.ok(home.includes(x.title));
+  for (const x of experiences) assert.ok(!home.includes(x.title));
   for (const x of events) assert.ok(!home.includes(x.title));
-  assert.equal((home.match(/class="sample"/g) || []).length, 5);
+  assert.equal((home.match(/class="sample"/g) || []).length, 0);
 });
 test('home contains the approved hero, maker cards, supplied map and filters', () => {
-  for (const text of ['しまなみの風土から','造り手を見る','酒蔵・醸造所見学','ペアリング','文化ガイド','お酒診断','スタンプラリー','開催予定','終了','すべて','地図を大きく見る']) assert.ok(home.includes(text), text);
+  for (const text of ['しまなみの風土から','造り手を見る','開催予定','終了','すべて','地図を大きく見る']) assert.ok(home.includes(text), text);
+  for(const category of ['酒蔵・醸造所見学','ペアリング','文化ガイド','お酒診断','スタンプラリー'])assert.ok(publishedHome.includes(category));
   assert.equal((home.match(/class="maker"/g) || []).length, 5);
   assert.equal((home.match(/class="pin"/g) || []).length, 5);
   assert.doesNotMatch(home, /class="desc"|class="switch"|view-maker|data:image|<iframe/);
@@ -72,14 +75,14 @@ test('map and detail directions encode the address without a postal code', async
   }
 });
 test('bookings and event links use data URLs and open a safe new tab', () => {
-  for (const x of experiences) assert.ok(home.includes(`href="${x.booking_url}" target="_blank" rel="noopener noreferrer"`));
+  for (const x of experiences) assert.ok(publishedHome.includes(`href="${x.booking_url}" target="_blank" rel="noopener noreferrer"`));
   for (const x of events) assert.ok(!home.includes(x.title));
 });
 test('winery photos are copied byte-for-byte and empty experience photos have placeholders', async () => {
   const winery = makers.find(m => m.id === 'omishima-winery');
   for (const p of winery.photos) assert.deepEqual(await readFile(join(root, 'dist/assets', p)), await readFile(join(root, 'assets', p)));
   assert.ok(winery.photos.includes('photos/winery-tanks.jpg'));
-  assert.equal((home.match(/写真登録予定/g) || []).length, 2);
+  assert.equal((publishedHome.match(/写真登録予定/g) || []).length, 2);
 });
 test('all six footers keep brand and navigation and omit the three removed notices', async () => {
   for (const [index, html] of [home, ...await Promise.all(makers.map(m => read(`dist/makers/${m.id}/index.html`)))].entries()) {
@@ -152,7 +155,7 @@ test('supplied map keeps fixed maker numbers and colors even when display order 
 });
 
 test('experiences show booking below description without a side information table', () => {
-  const list = home.match(/<ul class="exp-list"[\s\S]*?<\/ul>/)[0];
+  const list = publishedHome.match(/<ul class="exp-list"[\s\S]*?<\/ul>/)[0];
   assert.doesNotMatch(list, /class="e-side"|<dl>|<dt>/);
   for (const row of list.matchAll(/<li [\s\S]*?<\/li>/g)) {
     assert.match(row[0], /class="e-main">[\s\S]*?class="e-desc">[\s\S]*?<\/p><a [^>]*href="[^"]+"[^>]*>[\s\S]*?<\/a><\/div><\/li>$/);
@@ -160,7 +163,7 @@ test('experiences show booking below description without a side information tabl
 });
 
 test('experience category controls are absent and all experiences remain visible', () => {
-  const section = home.match(/<section[^>]*id="experience"[\s\S]*?<\/section>/)[0];
+  const section = publishedHome.match(/<section[^>]*id="experience"[\s\S]*?<\/section>/)[0];
   assert.doesNotMatch(section, /class="chips"|体験の種類で絞り込む|種類から探せます|id="ex-/);
   assert.equal((section.match(/<li data-k=/g)||[]).length, experiences.length);
 });

@@ -762,3 +762,24 @@ test('event registration needs no typed ID, uses one date and preserves identity
   assert.ok(render().includes(saved.title));assert.equal(server.rpc({action:'load',token}).data.events.at(-1).id,id);
  }finally{await page.close();}
 });
+
+test('experience page and booking toggles persist independently without losing the reservation URL',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ const url='https://booking.example.test/reserve',title='表示設定の体験';
+ try{
+  await client.evaluate(`document.querySelector('[data-section=experiences]').click();document.getElementById('add').click();document.getElementById('input-title').value=${JSON.stringify(title)};document.getElementById('input-booking_url').value=${JSON.stringify(url)};document.getElementById('input-maker_id').value=${JSON.stringify(seed.makers[0].id)}`);
+  const id=await client.evaluate("document.getElementById('input-id').value");
+  assert.equal(await client.evaluate("document.getElementById('fields').textContent.includes('表示例')"),false);
+  for(const [visible,button] of [[true,false],[false,false],[false,true],[true,true]]){
+   const count=page.saves.length;
+   await client.evaluate(`document.getElementById('input-sample').checked=${visible};document.getElementById('input-booking_label').checked=${button};document.getElementById('edit-form').requestSubmit()`);
+   await waitFor("!document.getElementById('save').disabled");assert.equal(page.saves.length,count+1);assert.equal(page.saves.at(-1).result.ok,true);
+   const data=server.rpc({action:'load',token}).data,record=data.experiences.find(x=>x.id===id);
+   assert.equal(record.booking_url,url);assert.equal(record.sample,!visible);assert.equal(record.booking_label,button?'予約サイトへ':'非表示');
+   const pages=renderPages(data.makers,data.experiences,data.events);
+   for(const path of ['index.html','makers/'+record.maker_id+'/index.html']){const html=pages.get(path);assert.equal(html.includes(title),visible);assert.equal(html.includes('href="'+url+'"'),visible&&button);}
+   assert.equal(await client.evaluate("document.getElementById('input-booking_url').value"),url);
+   assert.equal(await client.evaluate("document.getElementById('input-sample').checked"),visible);assert.equal(await client.evaluate("document.getElementById('input-booking_label').checked"),button);
+  }
+ }finally{await page.close();}
+});

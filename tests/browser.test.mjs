@@ -56,11 +56,16 @@ test('browser: a failed Google connection keeps both hero buttons fully visible 
   }
 });
 test('browser: all experiences remain visible without category controls after refresh', async () => {
+  const {renderPages}=await import('../scripts/site-render.mjs');
+  const data=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(root,'data',k+'.json'),'utf8'))])));
+  const file=join(root,'dist/experience-visibility-test.html'),url=pathToFileURL(file).href;
+  await writeFile(file,renderPages(data.makers,data.experiences.map(x=>({...x,sample:false})),[]).get('index.html'));
   for (let i=0;i<2;i++) {
-    await b.open(home);
+    await b.open(url);
     assert.equal(await b.evaluate("document.querySelectorAll('#experience .chips').length"),0);
     assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list > li')].filter(x=>!x.hidden).length"),5);
   }
+  await rm(file);
 });
 test('browser: event status uses Japan today, including yesterday, today, future and date rollover', async () => {
   const {renderPages}=await import('../scripts/site-render.mjs');
