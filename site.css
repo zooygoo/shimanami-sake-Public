@@ -71,7 +71,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 /* makers: desktop row, mobile stack */
 .row5{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--line)}
 .maker{display:flex;flex-direction:column;border-left:1px solid var(--line);text-decoration:none;min-width:0}
-.maker:first-child{border-left:0}
+.maker:first-child{border-left:1px solid transparent}
 .m-vis{position:relative;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:12px}
 .m-vis img{position:absolute;inset:18% 10%;width:80%;height:64%;max-width:100%;max-height:100%;min-width:0;object-fit:contain}
 .maker:hover .m-vis{background:var(--paper)}
