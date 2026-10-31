@@ -14,8 +14,14 @@ for(const name of ['site.css','site-render.mjs','site-runtime.mjs'])await cp(joi
 const css=await readFile(join(root,'scripts/site.css'));
 const stylesheet='site.'+createHash('sha256').update(css).digest('hex').slice(0,12)+'.css';
 await writeFile(join(dist,stylesheet),css);
+const renderer=await readFile(join(root,'scripts/site-render.mjs'),'utf8');
+const rendererName='site-render.'+createHash('sha256').update(renderer).digest('hex').slice(0,12)+'.mjs';
+await writeFile(join(dist,rendererName),renderer);
+const runtime=(await readFile(join(root,'scripts/site-runtime.mjs'),'utf8')).replace("'./site-render.mjs'","'./"+rendererName+"'");
+const runtimeName='site-runtime.'+createHash('sha256').update(runtime).digest('hex').slice(0,12)+'.mjs';
+await writeFile(join(dist,runtimeName),runtime);
 for(const [path,html] of renderPages(makers,experiences,events,connection)){
- const target=join(dist,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,html.replace(/href="((?:\.\.\/)*)site\.css"/g,`href="$1${stylesheet}"`));
+ const target=join(dist,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,html.replace(/href="((?:\.\.\/)*)site\.css"/g,`href="$1${stylesheet}"`).replace(/src="((?:\.\.\/)*)site-runtime\.mjs"/g,`src="$1${runtimeName}"`));
 }
 const logo='data:image/png;base64,'+(await readFile(join(root,'assets/brand/shimanami-logo.png'))).toString('base64');
 const adminTemplate=await readFile(join(root,'apps-script/Admin.html'),'utf8');
