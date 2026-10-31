@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { browser } from './helpers/browser.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -10,16 +10,37 @@ const home = pathToFileURL(join(root, 'dist/index.html')).href;
 let b;
 before(async () => { execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root }); b = await browser(); });
 after(async () => { if (b) await b.close(); });
-for (const width of [360, 390, 1366, 1920]) test(`browser: home and all five details fit width ${width}; maker row scrolls only on mobile`, async () => {
+for (const width of [360, 390, 768, 860, 861, 1366, 1920]) test(`browser: home and all five details fit width ${width}; maker cards stack on mobile`, async () => {
   await b.open(home, width, 900);
   assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
-  const row = await b.evaluate(`(() => { const r = document.querySelector('.row5'); return {scroll:r.scrollWidth, width:r.clientWidth, tops:[...r.children].map(x=>x.getBoundingClientRect().top)}; })()`);
-  if (width < 600) {
-    assert.ok(row.scroll > row.width);
-    assert.equal(await b.evaluate(`(() => {const r=document.querySelector('.row5');r.scrollLeft=r.scrollWidth;return r.lastElementChild.getBoundingClientRect().right <= r.getBoundingClientRect().right + 1})()`), true);
+  const row = await b.evaluate(`(() => { const r = document.querySelector('.row5'); return {scroll:r.scrollWidth, width:r.clientWidth, tops:[...r.children].map(x=>x.getBoundingClientRect().top),bottoms:[...r.children].map(x=>x.getBoundingClientRect().bottom)}; })()`);
+  assert.ok(row.scroll <= row.width, "no horizontal scrolling in the maker list");
+  if (width <= 860) {
+    assert.ok(row.tops.every((top,i)=>i===0 || top>=row.bottoms[i-1]+15), "every maker follows the previous card vertically");
   } else assert.ok(row.tops.every(t => t === row.tops[0]));
   const links = await b.evaluate(`[...document.querySelectorAll('.maker')].map(a=>a.href)`);
   for (const link of links) { await b.open(link, width); assert.equal(await b.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, link); await b.evaluate("Promise.all([...document.images].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)"); assert.equal(await b.evaluate('[...document.images].every(x=>x.complete && x.naturalWidth>0)'), true); }
+});
+test('browser: logos retain balanced margins on white panels at mobile and desktop widths',async()=>{
+ for(const width of [390,861,1366,1451,1920]){
+  await b.open(home,width);
+  await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
+  const panels=await b.evaluate("[...document.querySelectorAll('.m-vis')].map(p=>{const r=p.getBoundingClientRect(),i=p.querySelector('img').getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom,background:getComputedStyle(p).backgroundColor,fit:getComputedStyle(p.querySelector('img')).objectFit,relativeWidth:i.width/r.width,relativeHeight:i.height/r.height,contained:i.left>=r.left&&i.right<=r.right&&i.top>=r.top&&i.bottom<=r.bottom}})");
+  for(const p of panels){
+   if(width>860){
+    assert.ok(Math.abs(p.width-p.height)<1,'desktop logo panels stay square');
+    assert.ok(Math.abs(p.bottom-panels[0].bottom)<.05,'desktop card bodies begin at the same height');
+   }
+   assert.ok(p.relativeWidth<.82&&p.relativeHeight<.66&&p.contained,'logo retains margins on every side');
+   assert.equal(p.fit,'contain','source logo proportions are preserved');
+   assert.equal(p.background,'rgb(255, 255, 255)','logo background is white');
+  }
+  await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+  await b.evaluate("document.querySelector('.maker').scrollIntoView({block:'center'})");
+  const point=await b.evaluate("(()=>{const r=document.querySelector('.m-vis').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()");
+  await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+  assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.m-vis')).backgroundColor"),'rgb(255, 255, 255)','hover keeps the logo background white');
+ }
 });
 test('browser: approved hero content fits the first viewport at 390 and 1366', async () => {
   for (const width of [390, 1366]) {
@@ -27,6 +48,24 @@ test('browser: approved hero content fits the first viewport at 390 and 1366', a
     for (const selector of ['.logo-stage img','.hero h1','.intro','.ctas a']) assert.equal(await b.evaluate(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight})()`), true, `${width} ${selector}`);
     assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.hero')).backgroundColor"), 'rgb(0, 80, 142)');
   }
+});
+test('browser: mobile maker logos fill larger equal panels with full-width stacked cards',async()=>{
+ for(const width of [360,390,402,430,768,860]){
+  await b.open(home,width,874);
+  await b.evaluate("Promise.all([...document.querySelectorAll('.maker img')].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
+  for(let index=0;index<5;index++){
+   const layout=await b.evaluate(`(() => {const row=document.querySelector('.row5'),card=row.children[${index}];const panel=card.querySelector('.m-vis').getBoundingClientRect(),image=card.querySelector('img').getBoundingClientRect(),body=card.querySelector('.m-body').getBoundingClientRect(),bounds=card.getBoundingClientRect();return {height:panel.height,cardWidth:bounds.width,rowWidth:row.clientWidth,bodyTop:body.top,panelBottom:panel.bottom,contained:image.left>=panel.left&&image.right<=panel.right&&image.top>=panel.top&&image.bottom<=panel.bottom,allHeights:[...row.children].map(x=>x.querySelector('.m-vis').getBoundingClientRect().height)};})()`);
+   assert.equal(layout.height,184,`${width}px card ${index} has a larger fixed logo panel`);
+   assert.ok(layout.allHeights.every(height=>Math.abs(height-layout.height)<1),'all logos use the same panel height');
+   assert.equal(layout.cardWidth,layout.rowWidth,`${width}px card ${index} uses the full list width`);
+   assert.ok(layout.contained,`${width}px card ${index} logo stays inside its own panel`);
+   assert.equal(layout.bodyTop,layout.panelBottom,'the blue border begins directly below the logo panel');
+  }
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+  await b.evaluate("document.querySelector('.mnav a[href$=\"#makers\"]').click()");
+  const anchor=await b.evaluate("({title:document.querySelector('#makers h2').getBoundingClientRect().top,header:document.querySelector('.site-head').getBoundingClientRect().bottom})");
+  assert.ok(anchor.title>=anchor.header,`${width}px navigation must leave the title visible`);
+ }
 });
 test('browser: a failed Google connection keeps both hero buttons fully visible without changing the approved layout',async()=>{
   for(const width of [390,1366]){
@@ -38,21 +77,30 @@ test('browser: a failed Google connection keeps both hero buttons fully visible 
   }
 });
 test('browser: all experiences remain visible without category controls after refresh', async () => {
+  const {renderPages}=await import('../scripts/site-render.mjs');
+  const data=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(root,'data',k+'.json'),'utf8'))])));
+  const file=join(root,'dist/experience-visibility-test.html'),url=pathToFileURL(file).href;
+  await writeFile(file,renderPages(data.makers,data.experiences.map(x=>({...x,sample:false})),[]).get('index.html'));
   for (let i=0;i<2;i++) {
-    await b.open(home);
+    await b.open(url);
     assert.equal(await b.evaluate("document.querySelectorAll('#experience .chips').length"),0);
     assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list > li')].filter(x=>!x.hidden).length"),5);
   }
+  await rm(file);
 });
 test('browser: event status uses Japan today, including yesterday, today, future and date rollover', async () => {
+  const {renderPages}=await import('../scripts/site-render.mjs');
+  const data=Object.fromEntries(await Promise.all(['makers','experiences','events'].map(async k=>[k,JSON.parse(await readFile(join(root,'data',k+'.json'),'utf8'))])));
+  const eventFile=join(root,'dist/event-date-test.html'),eventHome=pathToFileURL(eventFile).href;
+  await writeFile(eventFile,renderPages(data.makers,data.experiences,data.events.map(x=>({...x,sample:false}))).get('index.html'));
   // At UTC October 3 15:00 it is October 4 in Japan. The sample ending October 4 must remain upcoming.
   const script = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: "{ const OriginalDate=Date; globalThis.Date=class extends OriginalDate { constructor(...args){super(...(args.length?args:['2026-10-03T15:00:00Z']))} static now(){return new OriginalDate('2026-10-03T15:00:00Z').getTime()} }; }" });
   await b.send('Emulation.setTimezoneOverride', { timezoneId: 'America/Los_Angeles' });
-  await b.open(home);
+  await b.open(eventHome);
   assert.equal(await b.evaluate("document.querySelector('[data-end-date=\"2026-10-04\"]').dataset.k"), '開催予定');
   await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script.identifier });
   const next = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: "{ const OriginalDate=Date; globalThis.Date=class extends OriginalDate { constructor(...args){super(...(args.length?args:['2026-10-04T15:00:00Z']))} }; }" });
-  await b.open(home);
+  await b.open(eventHome);
   for (const key of ['終了','終了','all','開催予定']) {
     await b.evaluate(`document.querySelector('#events button[data-k="${key}"]').click()`);
     assert.equal(await b.evaluate("[...document.querySelectorAll('#ev-list > li')].filter(x=>getComputedStyle(x).display!=='none').length"), key==='all'?4:key==='終了'?1:3);
@@ -60,6 +108,7 @@ test('browser: event status uses Japan today, including yesterday, today, future
   assert.equal(await b.evaluate("document.querySelector('.ended .status').textContent"), '終了');
   assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.ended h3')).color"), 'rgb(138, 153, 168)');
   await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: next.identifier });
+  await rm(eventFile);
 });
 test('browser: keyboard navigation, images and required screenshot widths', async () => {
   await b.open(home, 1366);

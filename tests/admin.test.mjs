@@ -17,6 +17,7 @@ function backend() {
  const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],images=new Map(); let email='owner@example.test',clock=Date.now(),imageFailure=false,imageBranch=false,lockDepth=0,checkLoginLock=false;
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
  const range=(rows,r,c,n=1,w=1)=>({
+  getValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>rows[r-1+i]?.[c-1+j]??'')),
   getDisplayValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>String(rows[r-1+i]?.[c-1+j]??''))),
   setRichTextValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v.text;});});},
   setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v;});});}
@@ -54,18 +55,62 @@ test('one administrator password creates an expiring session; wrong password and
 test('all reads, statistics and writes require a server-validated session',()=>{
  const b=backend();for(const action of ['load','stats','save'])assert.equal(b.rpc({action,token:'forged',collection:'makers',record:seed.makers[0],revision:0}).ok,false);assert.equal(b.props.get('REVISION'),undefined);
 });
+
+function httpAdmin(server,request){return JSON.parse(server.ctx.doPost({postData:{contents:JSON.stringify({api:'admin-v1',...request})}}).text);}
+test('site admin bootstrap exposes only connection flags and public salt without a Google account',()=>{
+ const b=backend();b.setup();b.setEmail('');const before=JSON.stringify([...b.props]);
+ const result=JSON.parse(b.ctx.doGet({parameter:{action:'admin-bootstrap'}}).text);
+ assert.deepEqual(result,{ok:true,apiVersion:1,connected:true,photosReady:false,salt:'salt',needsSetup:false});
+ for(const secret of ['PASSWORD_HASH','PASSWORD_PEPPER','owner@example.test','pepper','test-sheet'])assert.ok(!JSON.stringify(result).includes(secret));
+ assert.equal(JSON.stringify([...b.props]),before);
+});
+test('site admin HTTP retains session checks and existing save, photo and statistics functions',()=>{
+ const b=backend();b.setup();b.setEmail('');b.props.set('GITHUB_IMAGE_TOKEN','server-only-token');
+ for(const action of ['load','stats','save','upload','photo'])assert.equal(httpAdmin(b,{action,token:'forged'}).ok,false,action);
+ assert.equal(httpAdmin(b,{action:'login',verifier:'b'.repeat(64)}).ok,false);
+ const {token}=httpAdmin(b,{action:'login',verifier:'a'.repeat(64)});assert.ok(token);
+ assert.equal(httpAdmin(b,{action:'load',token}).data.makers.length,5);
+ assert.equal(httpAdmin(b,{action:'save',token,collection:'experiences',record:{...seed.experiences[0],title:'サイトから保存'},revision:0}).ok,true);
+ assert.equal(httpAdmin(b,{action:'load',token}).data.experiences[0].title,'サイトから保存');
+ const base64=Buffer.from([255,216,255,224,...Array(4096).fill(0),255,217]).toString('base64');
+ const photo=httpAdmin(b,{action:'upload',token,collection:'experiences',base64});assert.equal(photo.ok,true);
+ assert.equal(httpAdmin(b,{action:'photo',token,path:photo.path}).base64,base64);
+ assert.ok(httpAdmin(b,{action:'stats',token}).dashboard);
+ assert.equal(httpAdmin(b,{action:'logout',token}).ok,true);assert.equal(httpAdmin(b,{action:'load',token}).ok,false);
+ const expired=httpAdmin(b,{action:'login',verifier:'a'.repeat(64)}).token;b.advance(3601000);assert.equal(httpAdmin(b,{action:'load',token:expired}).ok,false);
+});
+test('site admin HTTP cannot initialize credentials, bypass request limits or append visitor records',()=>{
+ const b=backend(),rows=b.sheets.get('閲覧記録').rows,before=JSON.stringify(rows);
+ assert.equal(httpAdmin(b,{action:'setup',verifier:'a'.repeat(64)}).ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);
+ assert.equal(httpAdmin(b,{action:'view',page:'/',event_id:randomUUID()}).ok,false);
+ assert.equal(httpAdmin(b,{action:'__proto__'}).ok,false);
+ for(const contents of ['{','null','[]',JSON.stringify({api:'admin-v1',action:'login',padding:'a'.repeat(400000)})])assert.equal(JSON.parse(b.ctx.doPost({postData:{contents}}).text).ok,false);
+ assert.equal(JSON.stringify(rows),before);
+ const view={action:'view',page:'/',event_id:randomUUID()};assert.equal(JSON.parse(b.ctx.doPost({postData:{contents:JSON.stringify(view)}}).text).ok,true);
+ assert.equal(rows.length,2,'ordinary visitor collection still works');
+});
 test('authenticated edits persist in Sheets and are returned by the public snapshot',()=>{
  const b=backend();b.setup();const token=b.login(),record={...seed.makers[0],description:'更新しました <script> & =SUM(A1)'};
  assert.equal(b.rpc({action:'save',token,collection:'makers',record,revision:0}).ok,true);
  const state=b.rpc({action:'load',token});assert.equal(state.data.makers[0].description,record.description);assert.equal(state.revision,1);
  const publicData=b.ctx.publicData_();assert.equal(publicData.makers[0].description,record.description);assert.equal(publicData.token,undefined);assert.equal(publicData.views,undefined);
 });
+async function fulfillAdminAsset(client,event){
+ const path=new URL(event.request.url).pathname.match(/\/assets\/((?:makers|photos)\/[a-zA-Z0-9_-]+\.(?:png|jpg|jpeg|webp))$/)?.[1];
+ if(!path)return false;
+ const bytes=readFileSync(new URL('../assets/'+path,import.meta.url));
+ await client.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:path.endsWith('.png')?'image/png':'image/jpeg'}],body:bytes.toString('base64')});return true;
+}
 async function adminPage(server,token){
  const fixture=await mkdtemp(join(tmpdir(),'sake-admin-flow-'));let client;
  try{
   const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
-  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__','').replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
+  const logo='data:image/png;base64,'+readFileSync(new URL('../assets/brand/shimanami-logo.png',import.meta.url)).toString('base64');
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
   client=await browser(fixture);
+  await client.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});
+  await client.send('Fetch.enable',{patterns:[{urlPattern:'*://*/assets/*'}]});
+  client.on('Fetch.requestPaused',async event=>{if(!await fulfillAdminAsset(client,event))await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});});
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding',{name:'testRpc'});
   const saves=[];
@@ -302,6 +347,71 @@ test('photo uploads require a session and server credential, stay in the image b
  assert.equal(b.rpc({action:'load',token}).data.events[0].photo,uploaded.path);assert.equal(b.ctx.publicData_(true).events[0].photo,'');
 });
 
+test('maker media persists in existing columns and resolves publicly without exposing credentials',()=>{
+ const b=backend();b.setup();const token=b.login();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ const before=structuredClone([...b.sheets].map(([name,sheet])=>[name,sheet.rows]));
+ const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
+ assert.equal(b.rpc({action:'upload',collection:'makers',base64}).ok,false);
+ const uploaded=b.rpc({action:'upload',collection:'makers',token,base64});
+ assert.equal(uploaded.ok,true);assert.match(uploaded.path,/^uploads\/makers\/[a-f0-9]{64}\.jpg$/);
+ const record={...seed.makers[0],logo:uploaded.path,photos:[uploaded.path,'photos/winery-tanks.jpg']};
+ assert.deepEqual(b.rpc({action:'save',collection:'makers',token,record,revision:0}),{ok:true,revision:1});
+ assert.deepEqual(b.rpc({action:'load',token}).data.makers[0],record);
+ const snapshot=JSON.parse(JSON.stringify(b.ctx.publicData_(true)));
+ assert.equal(snapshot.makers[0].logo,'data:image/jpeg;base64,'+base64);
+ assert.deepEqual(snapshot.makers[0].photos,['data:image/jpeg;base64,'+base64,'photos/winery-tanks.jpg']);
+ assert.ok(!JSON.stringify(snapshot).includes('test-only-secret'));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows[0]),JSON.stringify(before[0][1][0]));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows.slice(2)),JSON.stringify(before[0][1].slice(2)));
+ assert.equal(JSON.stringify(b.sheets.get('体験').rows),JSON.stringify(before[1][1]));assert.equal(JSON.stringify(b.sheets.get('イベント').rows),JSON.stringify(before[2][1]));
+ b.setImageFailure(true);
+ assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,description:'障害中の文章変更',photos:[...record.photos].reverse()},revision:1}).ok,true);
+ assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,logo:'',photos:[]},revision:2}).ok,true);
+ assert.equal(b.images.size,1,'removing display never deletes the stored image');
+});
+test('maker media rejects invalid paths, missing files, excess photos and coordinate changes without writes',()=>{
+ const b=backend();b.setup();const token=b.login(),record=seed.makers[0],before=structuredClone(b.sheets.get('造り手').rows);
+ const invalid=[{logo:'https://evil.test/logo.jpg'},{logo:'../private.jpg'},{logo:'uploads/events/'+'a'.repeat(64)+'.jpg'},{logo:'uploads/makers/'+'a'.repeat(64)+'.jpg'},{photos:[{}]},{photos:['javascript:alert(1)']},{photos:Array(7).fill('photos/winery-tanks.jpg')},{lat:1}];
+ for(const fields of invalid)assert.equal(b.rpc({action:'save',collection:'makers',token,record:{...record,...fields},revision:0}).ok,false,JSON.stringify(fields));
+ assert.equal(JSON.stringify(b.sheets.get('造り手').rows),JSON.stringify(before));assert.equal(b.props.get('REVISION'),undefined);
+});
+test('maker media editor uploads only on save, retains a failed selection and persists order and removals',async()=>{
+ const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
+ const {client,saves,waitFor,close}=await adminPage(server,token);
+ try{
+  const base64=readFileSync(new URL('../assets/makers/omishima-brewery.png',import.meta.url)).toString('base64');
+  async function choose(selector){await client.evaluate(`(()=>{const bytes=Uint8Array.from(atob(${JSON.stringify(base64)}),c=>c.charCodeAt(0)),transfer=new DataTransfer();transfer.items.add(new File([bytes],'test-logo.png',{type:'image/png'}));const input=document.querySelector(${JSON.stringify(selector)});input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);await waitFor("!document.getElementById('save').disabled");}
+  await choose('#input-logo input[type=file]');
+  assert.equal(server.imageRequests.length,0,'selecting an image must not upload');
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.querySelector('#review-fields .logo-preview').src.startsWith('data:image/jpeg;base64,')"),true);
+  await client.evaluate("document.getElementById('review-back').click()");
+  server.setImageFailure(true);
+  await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,0);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
+  server.setImageFailure(false);
+  await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.at(-1).result.ok,true);assert.match(server.rpc({action:'load',token}).data.makers[0].logo,/^uploads\/makers\//);
+  await client.evaluate("[...document.querySelectorAll('#input-logo button')].find(x=>x.textContent==='元のロゴに戻す').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(server.rpc({action:'load',token}).data.makers[0].logo,seed.makers[0].logo);
+  const winery=seed.makers.findIndex(x=>x.id==='omishima-winery');
+  await client.evaluate(`document.getElementById('record').value=${JSON.stringify(String(winery))};document.getElementById('record').dispatchEvent(new Event('change'))`);
+  await client.evaluate("[...document.querySelectorAll('#input-photos .maker-media-row')][1].querySelectorAll('button')[2].click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  const expected=[...seed.makers[winery].photos];[expected[0],expected[1]]=[expected[1],expected[0]];
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected);
+  await client.evaluate("document.querySelector('#input-photos .maker-media-row button:nth-child(2)').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected.slice(1));
+  await choose('#input-photos > input[type=file]');
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.querySelectorAll('#review-fields img').length"),5);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("!document.getElementById('save').disabled");
+  const added=server.rpc({action:'load',token}).data.makers[winery].photos;
+  assert.equal(added.length,4);assert.deepEqual(added.slice(0,3),expected.slice(1));assert.match(added[3],/^uploads\/makers\//);
+  await client.evaluate("document.querySelector('[data-section=experiences]').click()");
+  assert.equal(await client.evaluate("document.getElementById('input-maker_id').tagName"),'SELECT');
+  assert.equal(await client.evaluate("document.getElementById('input-maker_id').options.length"),6);
+ }finally{await close();}
+});
 test('the legacy event sheet gains only the trailing photo header when an authenticated save succeeds',()=>{
  const b=backend(),sheet=b.sheets.get('イベント');if(sheet.rows[0].at(-1)==='photo')sheet.rows.forEach(row=>row.pop());
  b.setup();const token=b.login();const loaded=b.rpc({action:'load',token});assert.equal(loaded.ok,true);assert.equal(loaded.data.events[0].photo,'');
@@ -431,12 +541,274 @@ test('legacy view-only statistics distinguish unmeasured clicks from measured ze
  assert.equal(b.rpc({action:'stats',token}).clicks.total,1);
 });
 
+test('dashboard filters every metric by inclusive Japan dates and exclusive end time without writing records',()=>{
+ const b=backend();b.advance(Date.parse('2026-11-01T03:00:00Z')-b.ctx.Date.now());b.setup();const token=b.login(),rows=b.sheets.get('閲覧記録').rows;
+ rows[0].push('action','target');
+ const add=(stamp,page='/',action='view',target='')=>rows.push([stamp,stamp.slice(0,10),page,randomUUID(),action,target]);
+ add('2026-10-31 08:59:59');add('2026-10-31 09:00:00');add('2026-10-31 09:30:00','/makers/omishima-winery/');
+ add('2026-10-31 09:40:00','/','click','experience:'+seed.experiences[0].id);
+ add('2026-10-31 09:50:00','/','click','event:'+seed.events[0].id);
+ add('2026-10-31 09:55:00','/','click','maker:omishima-winery:website');
+ add('2026-10-31 10:00:00');add('2026-11-01 09:00:00');add('2026-11-02 09:00:00');
+ const before=JSON.stringify(rows),stats=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'09:00',endTime:'10:00'});
+ assert.equal(stats.ok,true);assert.deepEqual(stats.dashboard.totals,{views:2,makers:1,experiences:1,events:1});
+ assert.deepEqual(stats.dashboard.daily,[['2026-10-31',2]]);assert.equal(stats.dashboard.hourly[9][1],2);
+ assert.equal(stats.dashboard.hourly.reduce((sum,x)=>sum+x[1],0),2);
+ assert.deepEqual(stats.dashboard.pages,{'/':1,'/makers/omishima-winery/':1});
+ assert.equal(stats.dashboard.links['maker:omishima-winery:website'],1);
+ assert.equal(JSON.stringify(rows),before);
+ const both=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-11-01',startTime:'09:00',endTime:'10:00'});
+ assert.equal(both.dashboard.totals.views,3);assert.deepEqual(both.dashboard.popularDays,[['2026-10-31',2],['2026-11-01',1]]);
+ const empty=b.rpc({action:'stats',token,startDate:'2026-10-01',endDate:'2026-10-01'});
+ assert.deepEqual(empty.dashboard.totals,{views:0,makers:0,experiences:0,events:0});
+ const onlyEnd=b.rpc({action:'stats',token,endDate:'2026-10-01'});assert.equal(onlyEnd.dashboard.totals.views,0);assert.equal(onlyEnd.dashboard.range.startDate,'2026-10-01');
+ const onlyStart=b.rpc({action:'stats',token,startDate:'2026-11-02'});assert.equal(onlyStart.dashboard.totals.views,0);assert.equal(onlyStart.dashboard.range.endDate,'2026-11-02');
+});
+
+test('dashboard accepts Sheets dates and serials, rejects invalid rows and preserves unmeasured clicks',()=>{
+ const b=backend();b.advance(Date.parse('2026-11-01T03:00:00Z')-b.ctx.Date.now());b.setup();const token=b.login(),rows=b.sheets.get('閲覧記録').rows;
+ const day=(Date.UTC(2026,9,31)-Date.UTC(1899,11,30))/86400000;
+ rows.push([new Date('2026-10-31T00:00:00Z'),new Date('2026-10-30T15:00:00Z'),'/',randomUUID()]);
+ rows.push([day+9/24,day,'/makers/omishima-winery/',randomUUID()]);
+ rows.push(['2026/10/31 09:30:00','2026/10/31','/',randomUUID()]);
+ for(const row of [['2026-02-30 09:00:00','2026-02-30'],['2026-10-31 25:00:00','2026-10-31'],['2026-11-01 13:00:00','2026-11-01']])rows.push([...row,'/',randomUUID()]);
+ rows.push(['2026-10-31 09:00:00','2026-10-31','/admin/',randomUUID()]);
+ const stats=b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'09:00',endTime:'10:00'});
+ assert.equal(stats.ok,true);assert.equal(stats.dashboard.totals.views,3);assert.equal(stats.dashboard.totals.experiences,null);assert.equal(stats.dashboard.totals.events,null);
+ assert.equal(stats.dashboard.hourly[9][1],3);assert.equal(stats.dashboard.skipped,4);assert.equal(stats.clicksMeasured,false);
+});
+
+test('dashboard rejects invalid and reversed filters on the authenticated server',()=>{
+ const b=backend();b.setup();const token=b.login();
+ for(const filters of [{startDate:'2026-02-30'},{startDate:'2026-10-31',endDate:'2026-10-01'},{startTime:'10:00',endTime:'09:00'},{startTime:'24:00'},{endTime:'25:00'},{startDate:[]},{endDate:'<script>'}])assert.equal(b.rpc({action:'stats',token,...filters}).ok,false,JSON.stringify(filters));
+ assert.equal(b.rpc({action:'stats',token,startDate:'2026-10-31',endDate:'2026-10-31',startTime:'00:00',endTime:'24:00'}).ok,true);
+});
+
+test('dashboard browser supports one day, presets, empty ranges, retry and responsive accessible charts',async()=>{
+ const server=backend();server.advance(Date.parse('2026-11-01T03:00:00Z')-server.ctx.Date.now());server.setup();
+ const rows=server.sheets.get('閲覧記録').rows;rows[0].push('action','target');
+ rows.push(['2026-10-31 09:00:00','2026-10-31','/',randomUUID(),'view','']);
+ rows.push(['2026-10-31 10:00:00','2026-10-31','/makers/omishima-winery/',randomUUID(),'view','']);
+ rows.push(['2026-10-31 10:05:00','2026-10-31','/',randomUUID(),'click','experience:'+seed.experiences[0].id]);
+ rows.push(['2026-11-01 09:00:00','2026-11-01','/',randomUUID(),'view','']);
+ let fail=false,calls=0;const originalRpc=server.rpc;server.rpc=request=>{if(request.action==='stats'){calls++;if(fail)return {ok:false,error:'統計を読み込めませんでした。'};}return originalRpc(request);};
+ const {client,waitFor,close}=await adminPage(server,server.login());
+ try{
+  await client.evaluate("document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content svg[role=img]').length"),2);
+  await client.evaluate("document.getElementById('stats-start').value='2026-10-31';document.getElementById('stats-end').value='2026-10-31';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='2回'");
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=makers]').textContent"),'1回');
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=experiences]').textContent"),'1回');
+  for(const width of [360,390,1366]){
+   await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await client.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+   assert.equal(await client.evaluate("[...document.querySelectorAll('#stats-filter input,#stats-filter select,#stats-filter button')].every(x=>x.getBoundingClientRect().height>=44)"),true);
+   await client.evaluate("document.getElementById('stats-apply').focus()");
+   assert.equal(await client.evaluate("document.activeElement.id"),'stats-apply');
+   if(width!==360)await client.screenshot('/tmp/admin-analytics-'+width+'.png',true);
+  }
+  await client.evaluate("document.getElementById('stats-from').value='10:00';document.getElementById('stats-to').value='11:00';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=makers]').textContent"),'1回');
+  const before=calls;
+  await client.evaluate("document.getElementById('stats-start').value='2026-11-01';document.getElementById('stats-end').value='2026-10-31';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.getElementById('stats-message').textContent.includes('終了日')");assert.equal(calls,before);
+  await client.evaluate("document.querySelector('[data-stats-period=today]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  assert.equal(await client.evaluate("document.getElementById('stats-from').value"),'00:00');
+  await client.evaluate("document.querySelector('[data-stats-period=week]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  await client.evaluate("document.querySelector('[data-stats-period=month]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  await client.evaluate("document.querySelector('[data-section=makers]').click();document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='1回'");
+  await client.evaluate("document.getElementById('stats-start').value='2026-10-01';document.getElementById('stats-end').value='2026-10-01';document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='0回'");
+  fail=true;await client.evaluate("document.getElementById('stats-filter').requestSubmit()");
+  await waitFor("document.getElementById('stats-message').textContent.includes('読み込めません')");
+  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content [data-metric]').length"),0);
+  fail=false;await client.evaluate("document.querySelector('[data-stats-period=all]').click()");
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  const stats=server.rpc({action:'stats',token:await client.evaluate("sessionStorage.getItem('shimanami.admin.session')")});
+  await client.evaluate("window.originalStatsRpc=rpc;window.delayedStats=[];rpc=request=>request.action==='stats'?new Promise(resolve=>window.delayedStats.push(resolve)):window.originalStatsRpc(request);document.getElementById('stats-filter').requestSubmit();document.getElementById('stats-filter').requestSubmit()");
+  assert.equal(await client.evaluate('window.delayedStats.length'),1,'repeated submits must not start parallel reads');
+  await client.evaluate("document.querySelector('[data-section=makers]').click();document.querySelector('[data-section=stats]').click()");
+  await client.evaluate(`window.delayedStats[1](${JSON.stringify(stats)})`);
+  await waitFor("document.querySelector('[data-metric=views]')?.textContent==='3回'");
+  const stale=structuredClone(stats);stale.dashboard.totals.views=999;
+  await client.evaluate(`window.delayedStats[0](${JSON.stringify(stale)})`);
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=views]').textContent"),'3回','an older response must not replace the latest range');
+  await client.evaluate("document.getElementById('stats-filter').requestSubmit();document.getElementById('logout').click()");
+  await waitFor("document.getElementById('workspace').hidden");
+  await client.evaluate(`window.delayedStats[2](${JSON.stringify(stats)})`);
+  assert.equal(await client.evaluate("document.getElementById('stats-content').childElementCount"),0,'a late response after logout must stay hidden');
+ }finally{await close();}
+});
+
 test('browser labels legacy click statistics as unmeasured while keeping view totals',async()=>{
  const server=backend();server.setup();const {client,waitFor,close}=await adminPage(server,server.login());
  try{
   await client.evaluate("document.querySelector('[data-section=stats]').click()");
   await waitFor("document.getElementById('stats-content').textContent.includes('未計測')");
-  assert.equal(await client.evaluate("document.querySelectorAll('#stats-content table').length"),2);
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=experiences]').textContent"),'未計測');
+  assert.equal(await client.evaluate("document.querySelector('[data-metric=events]').textContent"),'未計測');
   assert.equal(await client.evaluate("document.getElementById('stats-content').textContent.includes('今月の閲覧数')"),true);
  }finally{await close();}
+});
+async function siteAdminPage(server,{initialFailure=false,oldServer=false}={}){
+ const fixture=await mkdtemp(join(tmpdir(),'sake-site-admin-'));let client,interceptionError,fail=initialFailure,legacy=oldServer,hold=false;
+ const requests=[];
+ try{
+  const html=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8'),logo='data:image/png;base64,'+readFileSync(new URL('../assets/brand/shimanami-logo.png',import.meta.url)).toString('base64');
+  await writeFile(join(fixture,'index.html'),html.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({transport:'http',connected:true,endpoint:'https://script.google.com/macros/s/test-only/exec',needsSetup:false,canSetup:false})));
+  client=await browser(fixture);await client.send('Network.setBlockedURLs',{urls:[]});
+  await client.send('Network.setCookie',{name:'SID',value:'fake-google-session',domain:'script.google.com',path:'/',secure:true,sameSite:'None'});
+  await client.send('Fetch.enable',{patterns:[{urlPattern:'https://*'},{urlPattern:'*://*/assets/*'}]});
+  client.on('Fetch.requestPaused',async event=>{
+   try{
+    if(await fulfillAdminAsset(client,event))return;
+    if(!event.request.url.startsWith('https://script.google.com/')){await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});return;}
+    requests.push(event.request);assert.notEqual(event.request.method,'OPTIONS','simple POST must avoid a preflight');
+    assert.equal(Object.keys(event.request.headers).some(x=>x.toLowerCase()==='cookie'),false,'Google account cookies must not be sent');
+    if(fail){await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'Failed'});return;}
+    if(hold&&event.request.method==='POST'&&JSON.parse(event.request.postData).action==='save')return;
+    const body=legacy?'<html>old server</html>':event.request.method==='GET'?server.ctx.doGet({parameter:{action:'admin-bootstrap'}}).text:server.ctx.doPost({postData:{contents:event.request.postData}}).text;
+    await client.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:legacy?'text/html':'application/json'},{name:'Access-Control-Allow-Origin',value:'*'}],body:Buffer.from(body).toString('base64')});
+   }catch(error){interceptionError=error;await client.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'Failed'}).catch(()=>{});}
+  });
+  await client.send('Page.addScriptToEvaluateOnNewDocument',{source:"window.transportOptions=[];const originalFetch=window.fetch;window.fetch=(url,options)=>{window.transportOptions.push(options);return originalFetch(url,options);};"});
+  const open=()=>client.open(pathToFileURL(join(fixture,'index.html')).href,390,900);
+  await open();
+  async function waitFor(expression){for(let i=0;i<200;i++){if(interceptionError)throw interceptionError;if(await client.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);}
+  return {client,requests,open,waitFor,setFailure:value=>{fail=value;},setLegacy:value=>{legacy=value;},setHold:value=>{hold=value;},close:async()=>{await client.close();await rm(fixture,{recursive:true,force:true});}};
+ }catch(error){if(client)await client.close();await rm(fixture,{recursive:true,force:true});throw error;}
+}
+test('site admin browser signs in, saves photos, reads statistics and logs out without Google navigation or cookies',async()=>{
+ const server=backend();server.rpc({action:'setup',verifier:pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')});server.setEmail('');server.props.set('GITHUB_IMAGE_TOKEN','test-only-token');
+ const experiences=server.sheets.get('体験').rows;experiences[1][experiences[0].indexOf('photo')]='';
+ const page=await siteAdminPage(server),{client,waitFor}=page;
+ try{
+  await waitFor("!document.getElementById('login-button').disabled");
+  assert.equal(await client.evaluate('window.google'),undefined);
+  await client.evaluate("document.getElementById('password').value='bad';document.getElementById('login').requestSubmit()");
+  await waitFor("document.getElementById('status').textContent.includes('正しくありません')");
+  await client.evaluate("document.getElementById('password').value='1234';document.getElementById('login').requestSubmit()");
+  await waitFor("!document.getElementById('workspace').hidden");
+  assert.equal(await client.evaluate("location.pathname.endsWith('/index.html')"),true);
+  await client.evaluate("document.querySelector('[data-section=experiences]').click();document.getElementById('input-title').value='サイト内で変更';document.getElementById('edit-form').requestSubmit()");
+  await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+  assert.equal(server.ctx.publicData_().experiences[0].title,'サイト内で変更');
+  const saves=()=>page.requests.filter(x=>x.method==='POST'&&JSON.parse(x.postData).action==='save').length,before=saves();
+  page.setHold(true);
+  await client.evaluate("const originalTimer=window.setTimeout;window.setTimeout=(fn,ms,...args)=>originalTimer(fn,ms===25000?50:ms,...args);document.getElementById('input-title').value='応答待ちでも残す入力';document.getElementById('input-title').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('edit-form').requestSubmit()");
+  await waitFor("document.getElementById('status').textContent.includes('保存済みの可能性')");
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),'応答待ちでも残す入力');
+  assert.equal(server.ctx.publicData_().experiences[0].title,'サイト内で変更');
+  assert.equal(saves(),before+1,'a timed-out save must not be retried automatically');
+  page.setHold(false);await client.evaluate("window.setTimeout=originalTimer;document.getElementById('input-title').value='サイト内で変更';document.getElementById('edit-form').requestSubmit()");
+  await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+  await client.evaluate("(async()=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=32;canvas.getContext('2d').fillRect(0,0,32,32);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));const files=new DataTransfer();files.items.add(new File([blob],'test.png',{type:'image/png'}));document.getElementById('input-photo').files=files.files;document.getElementById('input-photo').dispatchEvent(new Event('change'));})()");
+  await waitFor("document.getElementById('photo-note').textContent.includes('まだ保存していません')");
+  await client.evaluate("document.getElementById('edit-form').requestSubmit()");
+  await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+  assert.ok(server.ctx.publicData_().experiences[0].photo.startsWith('uploads/experiences/'));
+  await page.open();await waitFor("!document.getElementById('workspace').hidden");
+  await client.evaluate("document.querySelector('[data-section=stats]').click()");
+  await waitFor("document.querySelectorAll('#stats-content [data-metric]').length===4");
+  for(const width of [390,1366]){await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});assert.equal(await client.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);await client.screenshot('/tmp/site-admin-http-'+width+'.png',true);}
+  assert.equal(await client.evaluate("window.transportOptions.every(x=>x.credentials==='omit'&&x.mode==='cors'&&x.redirect==='follow'&&x.referrerPolicy==='no-referrer')"),true);
+  for(const request of page.requests){const url=new URL(request.url);assert.equal([...url.searchParams.keys()].some(key=>key!=='action'),false);if(request.method==='POST')assert.equal(JSON.parse(request.postData).api,'admin-v1');}
+  await client.evaluate("document.getElementById('logout').click()");await waitFor("document.getElementById('workspace').hidden");
+  assert.equal(await client.evaluate("sessionStorage.getItem('shimanami.admin.session')"),null);
+ }finally{await page.close();}
+});
+test('site admin browser refuses old servers, recovers connection failures and keeps owner setup locked',async()=>{
+ const server=backend();server.setup();const page=await siteAdminPage(server,{oldServer:true}),{client,waitFor}=page;
+ try{
+  await waitFor("!document.getElementById('connection-retry').hidden");assert.equal(await client.evaluate("document.getElementById('login-button').disabled"),true);
+  assert.equal(await client.evaluate("document.getElementById('workspace').hidden"),true);
+  page.setLegacy(false);page.setFailure(true);await client.evaluate("document.getElementById('connection-retry').click()");
+  await waitFor("!document.getElementById('connection-retry').hidden");assert.equal(await client.evaluate("document.getElementById('login-button').disabled"),true);
+  page.setFailure(false);await client.evaluate("document.getElementById('connection-retry').click()");
+  await waitFor("!document.getElementById('login-button').disabled");
+  server.props.delete('PASSWORD_HASH');await page.open();
+  await waitFor("document.getElementById('status').textContent.includes('所有者')");
+  assert.equal(await client.evaluate("document.getElementById('login-button').disabled"),true);
+  assert.equal(await client.evaluate("document.getElementById('confirm-field').hidden"),true,'site must not offer password initialization');
+ }finally{await page.close();}
+});
+
+test('event registration needs no typed ID, uses one date and preserves identity across draft changes',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=events]').click();document.getElementById('add').click()");
+  const id=await client.evaluate("document.getElementById('input-id').value");
+  assert.match(id,/^event-[0-9a-f-]{36}$/);
+  assert.equal(await client.evaluate("document.getElementById('input-id').type"),'hidden');
+  assert.equal(await client.evaluate("document.getElementById('input-sample').labels[0].textContent"),'サイトに公開する');
+  await client.evaluate("document.getElementById('input-title').value='公開する地域イベント';document.getElementById('input-start_date').value='2099-02-01';document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("document.getElementById('review').open"),true);
+  assert.equal(await client.evaluate("document.getElementById('review-fields').textContent.includes('管理用ID')"),false);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("document.getElementById('status').textContent.includes('保存しました')");
+  let saved=server.rpc({action:'load',token}).data.events.find(x=>x.id===id);
+  assert.equal(saved.end_date,saved.start_date);assert.equal(saved.sample,false);
+  const render=()=>{const d=server.ctx.publicData_();return renderPages(d.makers,d.experiences,d.events).get('index.html');};
+  assert.ok(render().includes(saved.title));
+  await client.evaluate("document.getElementById('input-sample').checked=false;document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  saved=server.rpc({action:'load',token}).data.events.find(x=>x.id===id);assert.equal(saved.sample,true);assert.ok(!render().includes(saved.title));
+  await client.evaluate("document.getElementById('input-sample').checked=true;document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  assert.ok(render().includes(saved.title));assert.equal(server.rpc({action:'load',token}).data.events.at(-1).id,id);
+ }finally{await page.close();}
+});
+
+test('experience page and booking toggles persist independently without losing the reservation URL',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ const url='https://booking.example.test/reserve',title='表示設定の体験';
+ try{
+  await client.evaluate(`document.querySelector('[data-section=experiences]').click();document.getElementById('add').click();document.getElementById('input-title').value=${JSON.stringify(title)};document.getElementById('input-booking_url').value=${JSON.stringify(url)};document.getElementById('input-maker_id').value=${JSON.stringify(seed.makers[0].id)}`);
+  const id=await client.evaluate("document.getElementById('input-id').value");
+  assert.equal(await client.evaluate("document.getElementById('fields').textContent.includes('表示例')"),false);
+  for(const [visible,button] of [[true,false],[false,false],[false,true],[true,true]]){
+   const count=page.saves.length;
+   await client.evaluate(`document.getElementById('input-sample').checked=${visible};document.getElementById('input-booking_label').checked=${button};document.getElementById('edit-form').requestSubmit()`);
+   await waitFor("!document.getElementById('save').disabled");assert.equal(page.saves.length,count+1);assert.equal(page.saves.at(-1).result.ok,true);
+   const data=server.rpc({action:'load',token}).data,record=data.experiences.find(x=>x.id===id);
+   assert.equal(record.booking_url,url);assert.equal(record.sample,!visible);assert.equal(record.booking_label,button?'予約サイトへ':'非表示');
+   const pages=renderPages(data.makers,data.experiences,data.events);
+   for(const path of ['index.html','makers/'+record.maker_id+'/index.html']){const html=pages.get(path);assert.equal(html.includes(title),visible);assert.equal(html.includes('href="'+url+'"'),visible&&button);}
+   assert.equal(await client.evaluate("document.getElementById('input-booking_url').value"),url);
+   assert.equal(await client.evaluate("document.getElementById('input-sample').checked"),visible);assert.equal(await client.evaluate("document.getElementById('input-booking_label').checked"),button);
+  }
+ }finally{await page.close();}
+});
+
+test('publishing an old experience with a placeholder booking link saves and appears after reloading',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=experiences]').click();document.getElementById('input-sample').checked=true;document.getElementById('input-booking_label').checked=false;document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(page.saves.length,1);assert.equal(page.saves[0].result.ok,true,JSON.stringify(page.saves[0].result));
+  const d=server.rpc({action:'load',token}).data,record=d.experiences[0];
+  assert.equal(record.sample,false);assert.equal(record.booking_url,'');assert.equal(record.booking_label,'非表示');
+  for(const key of ['price','duration','schedule','place'])assert.equal(record[key],seed.experiences[0][key]);
+  assert.equal(await client.evaluate("document.getElementById('input-sample').checked"),true);
+  assert.equal(await client.evaluate("document.getElementById('input-booking_label').checked"),false);
+  const pages=renderPages(d.makers,d.experiences,d.events);
+  for(const path of ['index.html','makers/'+record.maker_id+'/index.html'])assert.ok(pages.get(path).includes(record.title));
+ }finally{await page.close();}
+});
+test('experience form and review omit price and logistics while new registrations remain server-compatible',async()=>{
+ const server=backend();server.setup();const token=server.login(),page=await adminPage(server,token),{client,waitFor}=page;
+ try{
+  await client.evaluate("document.querySelector('[data-section=experiences]').click();document.getElementById('add').click();document.getElementById('input-title').value='リンク中心の新しい体験';document.getElementById('input-booking_url').value='https://booking.example.test/new'");
+  for(const key of ['price','duration','schedule','place'])assert.equal(await client.evaluate(`Boolean(document.getElementById('input-${key}'))`),false,key);
+  await client.evaluate("document.getElementById('preview').click()");
+  assert.equal(await client.evaluate("/料金|所要時間|開催|場所/.test(document.getElementById('review-fields').textContent)"),false);
+  await client.evaluate("document.getElementById('review-save').click()");await waitFor("!document.getElementById('save').disabled");
+  assert.equal(page.saves.at(-1).result.ok,true);const record=server.rpc({action:'load',token}).data.experiences.at(-1);
+  for(const key of ['price','duration','schedule','place'])assert.equal(record[key],'');
+  assert.equal(record.booking_url,'https://booking.example.test/new');assert.equal(record.sample,false);
+ }finally{await page.close();}
 });
