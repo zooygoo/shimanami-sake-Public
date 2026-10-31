@@ -9,7 +9,11 @@
     "description": "",
     "body": "",
     "logo": "makers/omishima-brewery.png",
-    "photos": [],
+    "photos": [
+      "photos/omishima-brewery-exterior.jpg",
+      "photos/omishima-brewery-equipment.jpg",
+      "photos/omishima-brewery-tasting.jpg"
+    ],
     "postal": "794-1304",
     "address": "愛媛県今治市大三島町宮浦5589",
     "tel": "0897-72-9248",
@@ -54,7 +58,11 @@
     "description": "",
     "body": "",
     "logo": "makers/omishima-limone.png",
-    "photos": [],
+    "photos": [
+      "photos/omishima-limone-exterior.jpg",
+      "photos/omishima-limone-citrus.jpg",
+      "photos/omishima-limone-products.jpg"
+    ],
     "postal": "794-1404",
     "address": "愛媛県今治市上浦町瀬戸2342",
     "tel": "0897-87-2131",
@@ -74,7 +82,11 @@
     "description": "",
     "body": "",
     "logo": "makers/imabari-machinaka-bakushu.png",
-    "photos": [],
+    "photos": [
+      "photos/imabari-machinaka-bakushu-entrance.jpg",
+      "photos/imabari-machinaka-bakushu-taps.jpg",
+      "photos/imabari-machinaka-bakushu-pouring.jpg"
+    ],
     "postal": "794-0015",
     "address": "愛媛県今治市常盤町3丁目4-13",
     "tel": "0898-35-4313",
