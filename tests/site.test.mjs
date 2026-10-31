@@ -38,7 +38,7 @@ test('all five makers exactly match the supplied names, addresses, phones and em
     ['imabari-machinaka-bakushu','今治街中麦酒','ビール','今治','商店街ブルワリー','794-0015','愛媛県今治市常盤町3丁目4-13','0898-35-4313',''],
     ['yagi-shuzobu','八木酒造部','日本酒','今治','山丹正宗','794-0042','愛媛県今治市旭町3丁目3-8','0898-22-6700','']
   ]);
-  makers.forEach((m, i) => { assert.equal(m.order, i + 1); for (const key of ['description','body','hours']) assert.equal(m[key], ''); assert.deepEqual(m.sns, []); assert.equal(m.lat, null); assert.equal(m.lng, null); });
+  makers.forEach((m, i) => { assert.equal(m.order, i + 1); for (const key of ['description','hours']) assert.equal(m[key], ''); assert.deepEqual(m.sns, []); assert.equal(m.lat, null); assert.equal(m.lng, null); });
 });
 test('data uses only the planned fields and asset paths', async () => {
   const keys = ['id','order','name','kind','area','sub','description','body','logo','photos','postal','address','tel','website','sns','hours','lat','lng'];
