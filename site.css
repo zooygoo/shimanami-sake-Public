@@ -243,3 +243,11 @@ body{overflow-wrap:anywhere}
   .m-body{padding:16px}
   .m-body .more{display:flex;align-items:center;min-height:44px;padding-top:8px}
 }
+
+/* Maker photos: preserve the complete first shop photo and original proportions. */
+.d-hero img{width:100%;height:auto;aspect-ratio:auto;max-height:none;object-fit:contain}
+.gallery{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.gallery img{width:100%;height:auto;aspect-ratio:auto;object-fit:contain}
+@media(max-width:860px){
+ .gallery{grid-template-columns:1fr}
+}
