@@ -2,16 +2,23 @@ import {test, before, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
+import {mkdtemp, cp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import {pathToFileURL, fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 import {browser} from './helpers/browser.mjs';
 import {renderPages} from '../scripts/site-render.mjs';
 
-const root=fileURLToPath(new URL('../',import.meta.url));
-const makers=JSON.parse(readFileSync(join(root,'data/makers.json'),'utf8'));
-let b;
-before(async()=>{execFileSync(process.execPath,['scripts/build.mjs'],{cwd:root});b=await browser();});
-after(async()=>{if(b)await b.close();});
+const source=fileURLToPath(new URL('../',import.meta.url));
+const makers=JSON.parse(readFileSync(join(source,'data/makers.json'),'utf8'));
+let b,root;
+before(async()=>{
+  root=await mkdtemp(join(tmpdir(),'sake-maker-photos-'));
+  for(const path of ['scripts','data','assets','apps-script'])await cp(join(source,path),join(root,path),{recursive:true});
+  execFileSync(process.execPath,['scripts/build.mjs'],{cwd:root});
+  b=await browser(root);
+});
+after(async()=>{if(b)await b.close();if(root)await rm(root,{recursive:true,force:true});});
 
 for(const width of [390,1366])test(`maker photos: original proportions, first photo and no overflow at ${width}px`,async()=>{
   for(const maker of makers){
