@@ -91,9 +91,9 @@ test('all local image, stylesheet and page links resolve under a GitHub Pages su
     for (const [, url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
       if (/^(https?:|tel:|#)/.test(url)) continue;
       assert.ok(!url.startsWith('/'), url);
-      const local = resolve(root, dirname(path), url.split('#')[0]);
+      const local = resolve(root, dirname(path), url.split(/[?#]/)[0]);
       assert.ok(local.startsWith(join(root, 'dist/')));
-      await readFile(url.split('#')[0].endsWith('/') ? join(local, 'index.html') : local);
+      await readFile(url.split(/[?#]/)[0].endsWith('/') ? join(local, 'index.html') : local);
     }
   }
 });
@@ -102,7 +102,8 @@ test('production CSS preserves the approved CSS except documented fit and overfl
   assert.equal(css, built);
   const mockup = await readFile(join(source,'docs/mockups/site-v1.html'),'utf8');
   const approved = mockup.match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\* review switcher[\s\S]*?(?=@media)/,'').replace(/^\.foot small\{[^\n]*\}\n/m,'').trim().replace('grid-template-columns:320px minmax(0,1fr) 220px','grid-template-columns:320px minmax(0,1fr)').split('\n').filter(line=>!line.includes('.e-side')).join('\n').replace('.e-desc{','.e-main > .btn{justify-self:start;margin-top:8px}\n.e-desc{');
-  assert.ok(css.startsWith(approved), 'approved CSS stays verbatim before functional additions');
+  const beforePhotoFix = css.replace('.d-hero img{display:block;width:100%;height:auto}', '.d-hero img{width:100%;aspect-ratio:3/2;object-fit:cover}').replace('.gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}', '.gallery{display:grid;grid-template-columns:2fr 1fr;gap:12px}').replace('.gallery img{display:block;width:100%;height:auto}', '.gallery img{width:100%;height:100%;object-fit:cover}\n.gallery .g1{grid-row:1/3;aspect-ratio:3/2}').replace('  .gallery{grid-template-columns:1fr}\n', '');
+  assert.ok(beforePhotoFix.startsWith(approved), 'approved CSS stays verbatim except the requested original-ratio maker photo fix');
   for (const token of ['--blue:#00508E','--blue-deep:#003F72','--ink:#102A43','--muted:#566B80','--line:#D5E0EA','--sea:#EAF2F8','--ended:#8A99A8','Noto Sans JP','max-width:1240px','repeat(5,minmax(0,1fr))']) assert.ok(css.includes(token), token);
   assert.doesNotMatch(css, /\.switch|box-shadow/);
 });
