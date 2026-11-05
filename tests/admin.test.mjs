@@ -812,3 +812,70 @@ test('experience form and review omit price and logistics while new registration
   assert.equal(record.booking_url,'https://booking.example.test/new');assert.equal(record.sample,false);
  }finally{await page.close();}
 });
+
+test('event URLs are optional and trimmed across create, edit, clear and a new session',()=>{
+ const b=backend();b.setup();let token=b.login();const before=JSON.stringify(b.sheets.get('イベント').rows);
+ let record={...seed.events[0],id:'optional-event-url',title:'URLなしのイベント',sample:false,url:''};
+ const save=()=>b.rpc({action:'save',token,collection:'events',record,revision:Number(b.props.get('REVISION')||0),create:!b.props.has('REVISION')});
+ for(const [input,expected] of [['',''],[' \t　\n',''],['  https://example.test/event?q=1  ','https://example.test/event?q=1'],['','']]){
+  record={...record,url:input};assert.equal(save().ok,true,JSON.stringify(input));
+  assert.equal(b.rpc({action:'load',token}).data.events.at(-1).url,expected);
+  assert.equal(b.ctx.publicData_().events.at(-1).url,expected);
+ }
+ b.rpc({action:'logout',token});token=b.login();
+ assert.equal(b.rpc({action:'load',token}).data.events.at(-1).url,'');
+ assert.equal(JSON.stringify(b.sheets.get('イベント').rows.slice(0,-1)),before);
+ const rows=JSON.stringify(b.sheets.get('イベント').rows),revision=b.props.get('REVISION');
+ for(const invalid of [{url:' http://example.test '},{url:' javascript:alert(1) '},{url:' https://exa mple.test '},{title:''},{start_date:''},{end_date:'2020-01-01'}]){
+  record={...record,...invalid};assert.equal(save().ok,false);assert.equal(b.props.get('REVISION'),revision);assert.equal(JSON.stringify(b.sheets.get('イベント').rows),rows);
+  record={...seed.events[0],id:'optional-event-url',title:'URLなしのイベント',sample:false,url:''};
+ }
+});
+
+test('browser publishes legacy event placeholders as no URL and keeps entered URLs',async()=>{
+ const server=backend();server.setup();const token=server.login();
+ const {client,saves,waitFor,open,close}=await adminPage(server,token);
+ try{
+  await client.evaluate("document.querySelector('[data-section=events]').click()");
+  assert.equal(await client.evaluate("document.getElementById('input-url').value"),'');
+  assert.equal(await client.evaluate("document.getElementById('input-url').required"),false);
+  for(const width of [390,1366]){
+   await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await client.evaluate("document.documentElement.scrollWidth<=innerWidth&&document.getElementById('input-url').getBoundingClientRect().height>=44&&document.getElementById('save').getBoundingClientRect().height>=44"),true);
+   if(process.env.SCREENSHOT_DIR){await client.evaluate("document.getElementById('input-url').scrollIntoView({block:'center'})");await client.screenshot(join(process.env.SCREENSHOT_DIR,`event-url-optional-${width}.png`));}
+  }
+  await client.evaluate("document.getElementById('input-time_text').focus()");
+  await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  await client.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  assert.equal(await client.evaluate("document.activeElement.id"),'input-url');
+  await client.evaluate("document.getElementById('input-sample').checked=true;document.getElementById('edit-form').requestSubmit()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.at(-1).result.ok,true);assert.equal(saves.at(-1).request.record.url,'');assert.equal(saves.at(-1).request.record.sample,false);
+  await client.evaluate("document.getElementById('input-url').value='  https://example.test/event  ';document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.at(-1).result.ok,true);assert.equal(saves.at(-1).request.record.url,'https://example.test/event');
+  await open();await client.evaluate("document.querySelector('[data-section=events]').click()");
+  assert.equal(await client.evaluate("document.getElementById('input-url').value"),'https://example.test/event');
+  await client.evaluate("document.getElementById('input-url').value=' 　';document.getElementById('preview').click();document.getElementById('review-save').click()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.at(-1).result.ok,true);assert.equal(saves.at(-1).request.record.url,'');
+  await open();await client.evaluate("document.querySelector('[data-section=events]').click()");
+  assert.equal(await client.evaluate("document.getElementById('input-url').value"),'');
+  assert.equal(server.ctx.publicData_().events[0].url,'');
+ }finally{await close();}
+});
+
+test('browser creates a published event without URL and reads it after reconnecting',async()=>{
+ const server=backend();server.setup();const token=server.login();
+ const {client,saves,waitFor,open,close}=await adminPage(server,token);
+ try{
+  await client.evaluate("document.querySelector('[data-section=events]').click();document.getElementById('add').click();document.getElementById('input-title').value='案内URLのない催し';document.getElementById('input-description').value='本文は公開します';document.getElementById('input-start_date').value='2026-12-01';document.getElementById('input-url').value=' 　';document.getElementById('input-sample').checked=true;document.getElementById('edit-form').requestSubmit()");
+  await waitFor("!document.getElementById('save').disabled");
+  assert.equal(saves.length,1);assert.equal(saves[0].result.ok,true);assert.equal(saves[0].request.create,true);assert.equal(saves[0].request.record.url,'');
+  await open();await client.evaluate("document.querySelector('[data-section=events]').click();const select=document.getElementById('record');select.value=[...select.options].find(x=>x.textContent==='案内URLのない催し').value;select.dispatchEvent(new Event('change'))");
+  assert.equal(await client.evaluate("document.getElementById('input-title').value"),'案内URLのない催し');
+  assert.equal(await client.evaluate("document.getElementById('input-url').value"),'');
+  const html=renderPages(seed.makers,[],server.ctx.publicData_().events).get('index.html');
+  assert.ok(html.includes('案内URLのない催し'));assert.ok(html.includes('本文は公開します'));assert.ok(!html.includes('btn btn-blue btn-sm ev-link'));
+ }finally{await close();}
+});

@@ -62,3 +62,13 @@ test('three maker galleries use the nine supplied images and preserve other make
  assert.equal(seed.makers.find(m=>m.id==='yagi-shuzobu').photos.length,0);
  assert.equal(seed.makers.find(m=>m.id==='omishima-winery').photos.length,4);
 });
+
+test('events without URLs keep their content and omit only the details link',()=>{
+ for(const url of ['', ' 　\t\n']){
+  const record={...seed.events[0],sample:false,title:'案内URLなし',description:'イベント本文',url};
+  const html=renderPages(seed.makers,[],[record]).get('index.html');
+  assert.ok(html.includes('案内URLなし'));assert.ok(html.includes('イベント本文'));assert.ok(html.includes(record.start_date));assert.ok(!html.includes('btn btn-blue btn-sm ev-link'));
+ }
+ const html=renderPages(seed.makers,[],[{...seed.events[0],sample:false,url:'  https://example.test/event  '}]).get('index.html');
+ assert.ok(html.includes('href="https://example.test/event"'));assert.ok(html.includes('詳しく見る'));
+});

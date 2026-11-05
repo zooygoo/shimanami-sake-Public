@@ -44,6 +44,7 @@ function validate_(kind,input){
   if(kind==='experiences'&&['見学','ペアリング','ガイド','診断','周遊'].indexOf(input.category)<0)throw new Error('種類を確認してください。');
   if(input.photo&&!/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(input.photo)&&!(photoPath_(input.photo)&&input.photo.indexOf('uploads/'+kind+'/')===0))throw new Error('写真の指定が正しくありません。');
   if(kind==='events'){
+    input.url=input.url.trim();
     [input.start_date,input.end_date].forEach(function(value){if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||isNaN(Date.parse(value))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw new Error('日付を確認してください。');});
     if(input.end_date<input.start_date)throw new Error('終了日は開始日以降にしてください。');
   }
