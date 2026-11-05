@@ -72,7 +72,7 @@ export async function browser(serveRoot = process.cwd()) {
       await evaluate('document.fonts.ready.then(() => true)');
     },
     async screenshot(path, fullPage = false) {
-      await evaluate("Promise.all([...document.images].map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
+      await evaluate("Promise.all([...document.images].filter(img=>img.getAttribute('src')).map(img=>{img.loading='eager';return img.decode()})).then(()=>true)");
       const metrics = await send('Page.getLayoutMetrics');
       const result = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: fullPage, ...(fullPage ? { clip: { x: 0, y: 0, width: metrics.cssContentSize.width, height: metrics.cssContentSize.height, scale: 1 } } : {}) });
       await writeFile(path, Buffer.from(result.data, 'base64'));

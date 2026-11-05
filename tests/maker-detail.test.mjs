@@ -1,0 +1,31 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {renderPages} from '../scripts/site-render.mjs';
+const seed=Object.fromEntries(['makers','experiences','events'].map(k=>[k,JSON.parse(readFileSync(new URL('../data/'+k+'.json',import.meta.url),'utf8'))]));
+test('maker detail separates identity from photos and keeps only confirmed bookable experiences',()=>{
+ const maker=seed.makers.find(m=>m.id==='omishima-winery');
+ const render=experiences=>renderPages(seed.makers,experiences,seed.events).get('makers/'+maker.id+'/index.html');
+ const sample=seed.experiences.find(x=>x.maker_id===maker.id);
+ const initial=render(seed.experiences);
+ assert.ok(initial.indexOf('<h1>')<initial.indexOf('class="d-logo"'));
+ assert.match(initial,/class="d-brand"/);
+ assert.doesNotMatch(initial,/ここで参加できる体験|予約サイトへ|ワイナリーの醸造所を見学する/);
+ assert.match(initial,/体験情報は、内容が決まり次第ご案内します。/);
+ const confirmed={...sample,sample:false,booking_url:'https://booking.example.test/winery'};
+ const html=render([sample,confirmed,{...confirmed,id:'no-booking',booking_url:''}]);
+ assert.match(html,/ここで参加できる体験/);
+ assert.equal((html.match(/href="https:\/\/booking.example.test\/winery"/g)||[]).length,1);
+ assert.doesNotMatch(html,/表示例|体験情報は、内容が決まり次第/);
+});
+test('maker media accepts live JPEG snapshots, filters unsafe photos and omits empty media frames',()=>{
+ const makers=structuredClone(seed.makers),m=makers[0];
+ m.logo='data:image/jpeg;base64,/9j/4AAA/9k=';
+ m.photos=['javascript:alert(1)','photos/winery-tanks.jpg','../private.jpg'];
+ let html=renderPages(makers,[],[]).get('makers/'+m.id+'/index.html');
+ assert.match(html,/class="d-logo" src="data:image\/jpeg;base64,/);
+ assert.match(html,/class="d-hero"/);assert.doesNotMatch(html,/class="gallery"|javascript:|private.jpg/);
+ m.photos=[];m.logo='';
+ html=renderPages(makers,[],[]).get('makers/'+m.id+'/index.html');
+ assert.doesNotMatch(html,/class="d-hero"|class="gallery"|class="d-brand"/);
+});
