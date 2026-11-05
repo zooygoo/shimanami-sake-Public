@@ -78,6 +78,22 @@ function save_(request){
     return {ok:true,revision:revision+1};
   }finally{lock.releaseLock();}
 }
+function delete_(request){
+  session_(request.token);
+  if(['experiences','events'].indexOf(request.collection)<0||typeof request.id!=='string'||!/^[a-z][a-z0-9-]{0,79}$/.test(request.id))throw new Error('削除する体験またはイベントを選んでください。');
+  var lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    var revision=Number(properties_().getProperty('REVISION')||0);
+    if(request.revision!==revision)throw new Error('別の画面で更新されました。再読み込みしてから確認してください。');
+    var def=definition_(request.collection),records=readCollection_(request.collection);
+    if(!records.some(function(record){return record.id===request.id;}))throw new Error('項目が見つかりません。最新の内容を再読み込みしてください。');
+    var sheet=database_().getSheetByName(def.name),row=sheet.getRange(2,1,sheet.getLastRow()-1,1).getDisplayValues().findIndex(function(value){return value[0]===request.id;})+2;
+    if(row<2)throw new Error('項目が見つかりません。最新の内容を再読み込みしてください。');
+    sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(){return SpreadsheetApp.newRichTextValue().setText('').build();})]);
+    properties_().setProperty('REVISION',String(revision+1));
+    return {ok:true,revision:revision+1};
+  }finally{lock.releaseLock();}
+}
 function rpc(request){
   try{
     if(!request||typeof request!=='object')throw new Error('リクエストが正しくありません。');
@@ -112,6 +128,7 @@ function rpc(request){
     session_(request.token);
     if(request.action==='load')return {ok:true,data:publicData_(),revision:Number(props.getProperty('REVISION')||0)};
     if(request.action==='save')return save_(request);
+    if(request.action==='delete')return delete_(request);
     if(request.action==='upload')return uploadPhoto_(request);
     if(request.action==='photo')return {ok:true,base64:photoContent_(request.path)};
     if(request.action==='stats')return statistics_(request);
@@ -213,7 +230,7 @@ function doPost(event){
     var request=JSON.parse(event.postData.contents);
     if(!request||typeof request!=='object'||Array.isArray(request))throw new Error('Request format');
     if(Object.prototype.hasOwnProperty.call(request,'api')){
-      if(request.api!=='admin-v1'||['login','logout','load','save','upload','photo','stats'].indexOf(request.action)<0)throw new Error('Admin operation');
+      if(request.api!=='admin-v1'||['login','logout','load','save','delete','upload','photo','stats'].indexOf(request.action)<0)throw new Error('Admin operation');
       // Initial password setup remains restricted to the owner's Google-hosted screen.
       result=rpc(request);
     }else{
@@ -228,7 +245,7 @@ function doGet(event){
   var params=event&&event.parameter||{};
   if(params.action==='admin-bootstrap'){
     var settings=properties_();
-    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('GITHUB_IMAGE_TOKEN'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,deleteReady:true,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('GITHUB_IMAGE_TOKEN'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
   }
   if(params.action==='public'){
     if(!/^__sakeData_[a-z0-9]+$/.test(params.callback||''))return ContentService.createTextOutput('{}').setMimeType(ContentService.MimeType.JSON);
@@ -237,7 +254,7 @@ function doGet(event){
   var props=properties_();
   if(!props.getProperty('PASSWORD_SALT'))props.setProperty('PASSWORD_SALT',uuid_());
   var owner=props.getProperty('OWNER_EMAIL'),active=Session.getActiveUser().getEmail();
-  var bootstrap={connected:!!props.getProperty('SPREADSHEET_ID'),photosReady:!!props.getProperty('GITHUB_IMAGE_TOKEN'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
+  var bootstrap={deleteReady:true,connected:!!props.getProperty('SPREADSHEET_ID'),photosReady:!!props.getProperty('GITHUB_IMAGE_TOKEN'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
   var html=HtmlService.createHtmlOutputFromFile('Admin').getContent().replace('__BOOTSTRAP_JSON__',JSON.stringify(bootstrap).replace(/</g,'\\u003c'));
   return HtmlService.createHtmlOutput(html).setTitle('SHIMANAMIの酒 管理画面');
 }

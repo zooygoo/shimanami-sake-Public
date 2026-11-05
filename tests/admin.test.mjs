@@ -46,6 +46,32 @@ function backend() {
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
  return {ctx,props,sheets,requireLoginLock:()=>{checkLoginLock=true;},lockDepth:()=>lockDepth,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
+for(const collection of ['experiences','events'])test(`${collection}: deletion requires a current session and revision and clears only the selected saved record`,()=>{
+ const b=backend();b.setup();const token=b.login();
+ const sheet=b.sheets.get(b.ctx.definition_(collection).name);
+ sheet.rows.splice(1,0,sheet.rows[0].map(()=>''));
+ const before=structuredClone(sheet.rows),id=before[2][0];
+ for(const request of [
+  {token:'forged',revision:0},
+  {token,revision:1},
+  {token,revision:0,id:'missing-id'},
+  {token,revision:0,id:'../invalid'}
+ ]){
+  const result=b.rpc({action:'delete',collection,id,token,revision:0,...request});
+  assert.equal(result.ok,false);assert.equal(JSON.stringify(sheet.rows),JSON.stringify(before));assert.equal(b.props.get('REVISION'),undefined);
+ }
+ assert.equal(b.rpc({action:'delete',collection:'makers',id:seed.makers[0].id,token,revision:0}).ok,false);
+ const result=b.rpc({action:'delete',collection,id,token,revision:0});
+ assert.equal(result.ok,true);assert.equal(result.revision,1);
+ assert.ok(sheet.rows[2].every(value=>value===''));
+ assert.equal(JSON.stringify(sheet.rows.slice(0,2)),JSON.stringify(before.slice(0,2)));assert.equal(JSON.stringify(sheet.rows.slice(3)),JSON.stringify(before.slice(3)));
+ assert.ok(!b.rpc({action:'load',token}).data[collection].some(record=>record.id===id));
+ assert.equal(b.rpc({action:'delete',collection,id,token,revision:1}).ok,false);
+ assert.equal(b.imageRequests.length,0,'deletion preserves image files');
+ b.rpc({action:'logout',token});assert.equal(b.rpc({action:'delete',collection,id:before[1][0],token,revision:1}).ok,false);
+ assert.equal(b.lockDepth(),0);
+});
+
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
 });
@@ -60,7 +86,7 @@ function httpAdmin(server,request){return JSON.parse(server.ctx.doPost({postData
 test('site admin bootstrap exposes only connection flags and public salt without a Google account',()=>{
  const b=backend();b.setup();b.setEmail('');const before=JSON.stringify([...b.props]);
  const result=JSON.parse(b.ctx.doGet({parameter:{action:'admin-bootstrap'}}).text);
- assert.deepEqual(result,{ok:true,apiVersion:1,connected:true,photosReady:false,salt:'salt',needsSetup:false});
+ assert.deepEqual(result,{ok:true,apiVersion:1,deleteReady:true,connected:true,photosReady:false,salt:'salt',needsSetup:false});
  for(const secret of ['PASSWORD_HASH','PASSWORD_PEPPER','owner@example.test','pepper','test-sheet'])assert.ok(!JSON.stringify(result).includes(secret));
  assert.equal(JSON.stringify([...b.props]),before);
 });
@@ -724,6 +750,49 @@ test('site admin browser signs in, saves photos, reads statistics and logs out w
   assert.equal(await client.evaluate("sessionStorage.getItem('shimanami.admin.session')"),null);
  }finally{await page.close();}
 });
+for(const collection of ['experiences','events'])test(`${collection}: site delete confirms the saved title, preserves cancellation, removes only after success and disables unsaved drafts`,async()=>{
+ const server=backend();server.rpc({action:'setup',verifier:pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')});
+ const page=await siteAdminPage(server),{client,waitFor}=page;let accept=false,dialog='';
+ client.on('Page.javascriptDialogOpening',async event=>{dialog=event.message;await client.send('Page.handleJavaScriptDialog',{accept});});
+ try{
+  await waitFor("!document.getElementById('login-button').disabled");
+  await client.evaluate("document.getElementById('password').value='1234';document.getElementById('login').requestSubmit()");
+  await waitFor("!document.getElementById('workspace').hidden");
+  assert.equal(await client.evaluate("document.getElementById('delete').hidden"),true);
+  await client.evaluate(`document.querySelector('[data-section=${collection}]').click()`);
+  const title=seed[collection][0].title,id=seed[collection][0].id;
+  assert.equal(await client.evaluate("document.getElementById('delete').disabled"),false);
+  await client.evaluate("document.getElementById('input-description').value='消さない下書き';document.getElementById('input-description').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('delete').click()");
+  assert.ok(dialog.includes(title));assert.equal(page.requests.filter(r=>r.method==='POST'&&JSON.parse(r.postData).action==='delete').length,0);
+  assert.equal(await client.evaluate("document.getElementById('input-description').value"),'消さない下書き');
+  accept=true;page.setFailure(true);
+  await client.evaluate("document.getElementById('delete').click()");
+  await waitFor("document.getElementById('status').textContent.includes('通信に失敗')");
+  assert.ok(server.ctx.publicData_()[collection].some(record=>record.id===id));
+  assert.equal(await client.evaluate("document.getElementById('input-description').value"),'消さない下書き');
+  page.setFailure(false);await client.evaluate("document.getElementById('delete').click()");
+  await waitFor("document.getElementById('status').textContent.includes('削除しました')");
+  assert.ok(!server.ctx.publicData_()[collection].some(record=>record.id===id));
+  assert.equal(server.ctx.publicData_()[collection].length,seed[collection].length-1);
+  await client.evaluate("document.getElementById('add').click()");
+  assert.equal(await client.evaluate("document.getElementById('delete').disabled"),true);
+ }finally{await page.close();}
+});
+
+test('delete stays disabled when the connected server has not enabled deletion',async()=>{
+ const server=backend();server.rpc({action:'setup',verifier:pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')});
+ const original=server.ctx.doGet;server.ctx.doGet=event=>{const result=original(event);if(event.parameter?.action==='admin-bootstrap'){const data=JSON.parse(result.text);delete data.deleteReady;result.text=JSON.stringify(data);}return result;};
+ const page=await siteAdminPage(server),{client,waitFor}=page;
+ try{
+  await waitFor("!document.getElementById('login-button').disabled");
+  await client.evaluate("document.getElementById('password').value='1234';document.getElementById('login').requestSubmit()");
+  await waitFor("!document.getElementById('workspace').hidden");
+  await client.evaluate("document.querySelector('[data-section=experiences]').click()");
+  assert.equal(await client.evaluate("document.getElementById('delete').hidden"),false);
+  assert.equal(await client.evaluate("document.getElementById('delete').disabled"),true);
+ }finally{await page.close();}
+});
+
 test('site admin browser refuses old servers, recovers connection failures and keeps owner setup locked',async()=>{
  const server=backend();server.setup();const page=await siteAdminPage(server,{oldServer:true}),{client,waitFor}=page;
  try{
