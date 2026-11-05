@@ -25,7 +25,11 @@ function readCollection_(kind){
   if(JSON.stringify(values[0])!==JSON.stringify(expected))throw new Error('保存先の列が一致しません。');
   return values.slice(1).filter(function(row){return row[0];}).map(function(row){var record={};def.fields.forEach(function(key,i){var value=row[i];record[key]=['photos','sns'].indexOf(key)>=0?JSON.parse(value||'[]'):key==='sample'?String(value).toLowerCase()==='true':key==='order'?Number(value):['lat','lng'].indexOf(key)>=0?(value===''?null:Number(value)):value;});return record;});
 }
-function publicData_(withImages){var data={};['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){validate_(kind,record);if(withImages&&photoPath_(record.photo)){try{record.photo='data:image/jpeg;base64,'+photoContent_(record.photo);}catch(error){record.photo='';}}return record;});});return data;}
+function publicData_(withImages){
+  var data={},images=Object.create(null);
+  function resolveImage(path){if(!withImages||!photoPath_(path))return path;if(!Object.prototype.hasOwnProperty.call(images,path)){try{images[path]='data:image/jpeg;base64,'+photoContent_(path);}catch(error){images[path]='';}}return images[path];}
+  ['makers','experiences','events'].forEach(function(kind){data[kind]=readCollection_(kind).map(function(record){validate_(kind,record);if(kind==='makers'){record.logo=resolveImage(record.logo);record.photos=record.photos.map(resolveImage).filter(Boolean);}else record.photo=resolveImage(record.photo);return record;});});return data;
+}
 function validate_(kind,input){
   var def=definition_(kind);
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(function(k){return def.fields.indexOf(k)<0;})||def.fields.some(function(k){return !Object.prototype.hasOwnProperty.call(input,k);}))throw new Error('入力項目が正しくありません。');
@@ -33,6 +37,10 @@ function validate_(kind,input){
   def.fields.forEach(function(k){var value=input[k];if(['photos','sns'].indexOf(k)>=0){if(!Array.isArray(value))throw new Error('配列の項目が正しくありません。');}else if(k==='sample'){if(typeof value!=='boolean')throw new Error('表示例の指定が正しくありません。');}else if(k==='order'){if(!Number.isSafeInteger(value)||value<1)throw new Error('表示順を確認してください。');}else if(k==='lat'||k==='lng'){if(value!==null&&(typeof value!=='number'||!isFinite(value)))throw new Error('座標を確認してください。');}else if(typeof value!=='string'||value.length>10000)throw new Error('文字数または入力形式を確認してください。');});
   if(!(kind==='makers'?input.name:input.title).trim())throw new Error('名前またはタイトルを入力してください。');
   if(kind==='makers'&&['日本酒','ビール','ワイン','リキュール'].indexOf(input.kind)<0)throw new Error('種類を確認してください。');
+  if(kind==='makers'){
+    function makerImage(path){return typeof path==='string'&&(/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(path)||photoPath_(path)&&path.indexOf('uploads/makers/')===0);}
+    if(input.logo&&!makerImage(input.logo)||input.photos.length>6||input.photos.some(function(path){return !makerImage(path);}))throw new Error('ロゴと写真の指定を確認してください。写真は6枚まで登録できます。');
+  }
   if(kind==='experiences'&&['見学','ペアリング','ガイド','診断','周遊'].indexOf(input.category)<0)throw new Error('種類を確認してください。');
   if(input.photo&&!/^(?:photos|makers)\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/.test(input.photo)&&!(photoPath_(input.photo)&&input.photo.indexOf('uploads/'+kind+'/')===0))throw new Error('写真の指定が正しくありません。');
   if(kind==='events'){
@@ -53,12 +61,16 @@ function save_(request){
     if(request.create===true&&index>=0)throw new Error('このIDはすでに使われています。別のIDを入力してください。');
     if(request.collection==='makers'){
       if(index<0)throw new Error('登録済みの造り手を選んでください。');
-      ['logo','photos','lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('写真と座標はこの画面では変更できません。');});
+      ['lat','lng'].forEach(function(k){if(JSON.stringify(record[k])!==JSON.stringify(records[index][k]))throw new Error('座標はこの画面では変更できません。');});
     }
     if(request.collection==='experiences'&&record.maker_id&&!readCollection_('makers').some(function(x){return x.id===record.maker_id;}))throw new Error('関連する造り手を確認してください。');
     var sheet=database_().getSheetByName(def.name),lastRow=sheet.getLastRow();
     var row=index<0?lastRow+1:sheet.getRange(2,1,lastRow-1,1).getDisplayValues().findIndex(function(value){return value[0]===record.id;})+2;
     if(photoPath_(record.photo)&&(index<0||records[index].photo!==record.photo))photoContent_(record.photo);
+    if(request.collection==='makers'){
+      var previous=[records[index].logo].concat(records[index].photos),checked=Object.create(null);
+      [record.logo].concat(record.photos).forEach(function(path){if(photoPath_(path)&&previous.indexOf(path)<0&&!checked[path]){photoContent_(path);checked[path]=true;}});
+    }
     if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
     // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
     sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(k){var value=record[k];return SpreadsheetApp.newRichTextValue().setText(value===null?'':typeof value==='object'?JSON.stringify(value):String(value)).build();})]);
@@ -102,7 +114,7 @@ function rpc(request){
     if(request.action==='save')return save_(request);
     if(request.action==='upload')return uploadPhoto_(request);
     if(request.action==='photo')return {ok:true,base64:photoContent_(request.path)};
-    if(request.action==='stats')return statistics_();
+    if(request.action==='stats')return statistics_(request);
     throw new Error('操作が正しくありません。');
   }catch(error){return {ok:false,error:error.message};}
 }
@@ -135,24 +147,89 @@ function externalTargets_(){
   readCollection_('experiences').forEach(function(x){if(https(x.booking_url))targets.push('experience:'+x.id);});
   readCollection_('events').forEach(function(x){if(https(x.url))targets.push('event:'+x.id);});return targets;
 }
-function statistics_(){
+function statisticsDate_(value){
+  var text=String(value),match=/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/.exec(text);
+  if(!match)return '';
+  var day=match[1]+'-'+('0'+match[2]).slice(-2)+'-'+('0'+match[3]).slice(-2),date=new Date(day+'T00:00:00Z');
+  return !isNaN(date.getTime())&&date.toISOString().slice(0,10)===day?day:'';
+}
+function statisticsCell_(value,timestamp){
+  if(Object.prototype.toString.call(value)==='[object Date]')return isNaN(value.getTime())?'':Utilities.formatDate(value,'Asia/Tokyo',timestamp?'yyyy-MM-dd HH:mm:ss':'yyyy-MM-dd');
+  if(typeof value==='number'){
+    // Sheets serials are local wall time. Round once to seconds before extracting boundaries.
+    var local=new Date(Date.UTC(1899,11,30)+Math.round(value*86400)*1000);
+    if(isNaN(local.getTime()))return '';
+    return local.toISOString().slice(0,timestamp?19:10).replace('T',' ');
+  }
+  return String(value||'').trim();
+}
+function statisticsTime_(value,end){
+  if(typeof value!=='string'||!/^\d{2}:\d{2}$/.test(value))throw new Error('時刻は00:00〜24:00で入力してください。');
+  var parts=value.split(':'),hour=Number(parts[0]),minute=Number(parts[1]);
+  if(minute>59||hour>23&&!(end&&hour===24&&minute===0))throw new Error('時刻は00:00〜24:00で入力してください。');
+  return hour*3600+minute*60;
+}
+function statistics_(request){
+  request=request||{};
+  var startDate=request.startDate===undefined?'':request.startDate,endDate=request.endDate===undefined?'':request.endDate,startTime=request.startTime===undefined?'00:00':request.startTime,endTime=request.endTime===undefined?'24:00':request.endTime;
+  [startDate,endDate].forEach(function(day){if(typeof day!=='string'||day&&(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!statisticsDate_(day)))throw new Error('日付を正しく入力してください。');});
+  if(startDate&&endDate&&startDate>endDate)throw new Error('終了日は開始日以降にしてください。');
+  var startSeconds=statisticsTime_(startTime,false),endSeconds=statisticsTime_(endTime,true);
+  if(startSeconds>=endSeconds)throw new Error('終了時刻は開始時刻より後にしてください。');
   var sheet=database_().getSheetByName('閲覧記録');if(!sheet)throw new Error('閲覧記録シートがありません。');
   var headers=sheet.getRange(1,1,1,6).getDisplayValues()[0],clicksMeasured=headers[4]==='action'&&headers[5]==='target';
-  var rows=sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,6).getDisplayValues():[];
-  var today=Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),fromMonth=today.slice(0,7)+'-01',byPage=Object.create(null),byLink=Object.create(null),counts={today:0,week:0,month:0,total:0},clicks={today:0,month:0,total:0};
+  var rows=sheet.getLastRow()>1?sheet.getRange(2,1,sheet.getLastRow()-1,6).getValues():[];
+  var now=new Date(),today=Utilities.formatDate(now,'Asia/Tokyo','yyyy-MM-dd'),from7=Utilities.formatDate(new Date(Date.now()-6*86400000),'Asia/Tokyo','yyyy-MM-dd'),fromMonth=today.slice(0,7)+'-01',byPage=Object.create(null),byLink=Object.create(null),counts={today:0,week:0,month:0,total:0},clicks={today:0,month:0,total:0};
+  var pages=Object.create(null),links=Object.create(null),daily=Object.create(null),hourly=Array.apply(null,Array(24)).map(function(_,hour){return [('0'+hour).slice(-2)+':00',0];}),totals={views:0,makers:0,experiences:clicksMeasured?0:null,events:clicksMeasured?0:null},earliest=today,skipped=0;
+  var allowedPages=['/'].concat(readCollection_('makers').map(function(x){return '/makers/'+x.id+'/';}));
   rows.forEach(function(row){
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(row[1])||row[1]>today)return;
-    if(row[4]&&row[4]!=='view'&&row[4]!=='click')return;
+    var day=statisticsDate_(statisticsCell_(row[1],false)),stamp=statisticsCell_(row[0],true),time=/^(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(stamp);
+    if(!day||day>today||!time||statisticsDate_(time[1])!==day||Number(time[2])>23||Number(time[3])>59||Number(time[4]||0)>59||row[4]&&row[4]!=='view'&&row[4]!=='click'||allowedPages.indexOf(row[2])<0){skipped++;return;}
+    var seconds=Number(time[2])*3600+Number(time[3])*60+Number(time[4]||0),instant=new Date(day+'T'+('0'+time[2]).slice(-2)+':'+time[3]+':'+(time[4]||'00')+'+09:00');
+    if(instant.getTime()>now.getTime()){skipped++;return;}
+    if(day<earliest)earliest=day;
     var click=row[4]==='click',group=click?clicks:counts;group.total++;
-    if(row[1]===today)group.today++;if(row[1]>=fromMonth)group.month++;
+    if(day===today)group.today++;if(day>=fromMonth)group.month++;
     if(click)byLink[row[5]]=(byLink[row[5]]||0)+1;
-    else{if(row[1]>=from7)counts.week++;byPage[row[2]]=(byPage[row[2]]||0)+1;}
-  });return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink,clicksMeasured:clicksMeasured};
+    else{if(day>=from7)counts.week++;byPage[row[2]]=(byPage[row[2]]||0)+1;}
+    if(startDate&&day<startDate||endDate&&day>endDate||seconds<startSeconds||seconds>=endSeconds)return;
+    if(click){
+      links[row[5]]=(links[row[5]]||0)+1;
+      if(clicksMeasured&&/^experience:/.test(row[5]))totals.experiences++;
+      if(clicksMeasured&&/^event:/.test(row[5]))totals.events++;
+    }else{
+      totals.views++;if(row[2]!=='/')totals.makers++;
+      pages[row[2]]=(pages[row[2]]||0)+1;daily[day]=(daily[day]||0)+1;hourly[Math.floor(seconds/3600)][1]++;
+    }
+  });
+  var days=Object.keys(daily).sort().map(function(day){return [day,daily[day]];});
+  return {ok:true,counts:counts,pages:byPage,clicks:clicks,links:byLink,clicksMeasured:clicksMeasured,dashboard:{today:today,earliest:earliest,range:{startDate:startDate||(endDate&&endDate<earliest?endDate:earliest),endDate:endDate||(startDate&&startDate>today?startDate:today),startTime:startTime,endTime:endTime},totals:totals,pages:pages,links:links,daily:days,hourly:hourly,popularDays:days.slice().sort(function(a,b){return b[1]-a[1]||a[0].localeCompare(b[0]);}),skipped:skipped}};
 }
-function doPost(event){var result;try{configure_();if(!event.postData||event.postData.contents.length>2048)throw new Error('Request size');result=recordView_(JSON.parse(event.postData.contents));}catch(error){result={ok:false,error:'リクエストが正しくありません。'};}return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);}
+function doPost(event){
+  var result;
+  try{
+    configure_();
+    if(!event||!event.postData||typeof event.postData.contents!=='string'||event.postData.contents.length>400000)throw new Error('Request size');
+    var request=JSON.parse(event.postData.contents);
+    if(!request||typeof request!=='object'||Array.isArray(request))throw new Error('Request format');
+    if(Object.prototype.hasOwnProperty.call(request,'api')){
+      if(request.api!=='admin-v1'||['login','logout','load','save','upload','photo','stats'].indexOf(request.action)<0)throw new Error('Admin operation');
+      // Initial password setup remains restricted to the owner's Google-hosted screen.
+      result=rpc(request);
+    }else{
+      if(event.postData.contents.length>2048)throw new Error('Request size');
+      result=recordView_(request);
+    }
+  }catch(error){result={ok:false,error:'リクエストが正しくありません。'};}
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
 function doGet(event){
   configure_();
   var params=event&&event.parameter||{};
+  if(params.action==='admin-bootstrap'){
+    var settings=properties_();
+    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('GITHUB_IMAGE_TOKEN'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
+  }
   if(params.action==='public'){
     if(!/^__sakeData_[a-z0-9]+$/.test(params.callback||''))return ContentService.createTextOutput('{}').setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(params.callback+'('+JSON.stringify(publicData_(true)).replace(/</g,'\\u003c')+');').setMimeType(ContentService.MimeType.JAVASCRIPT);

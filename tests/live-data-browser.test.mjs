@@ -17,7 +17,8 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   state.makers[0].name='シートで変更した造り手';state.makers[0].description='<img src=x onerror="window.injected=true">';
   state.experiences[0].booking_url='https://booking.example.test/reserve?source=site';state.events[0].url='https://info.example.test/event';
   const jpeg='data:image/jpeg;base64,'+(await readFile(join(fixture,'assets/photos/winery-tanks.jpg'))).toString('base64');
-  state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;
+  state.experiences[0].photo=jpeg;state.events[1].photo=jpeg;state.events[0].sample=false;state.events[1].sample=false;
+  state.makers[0].logo=jpeg;state.makers[0].photos=[jpeg];state.experiences[0].maker_id=state.makers[0].id;state.experiences[0].sample=false;
   execFileSync(process.execPath,['scripts/build.mjs'],{cwd:fixture});b=await browser(fixture);
   await b.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});
   await b.send('Fetch.enable',{patterns:[{urlPattern:'https://script.google.com/*'}]});
@@ -41,10 +42,13 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
    if(process.env.SCREENSHOT_DIR){await mkdir(process.env.SCREENSHOT_DIR,{recursive:true});await b.evaluate("document.getElementById('events').scrollIntoView()");await b.screenshot(join(process.env.SCREENSHOT_DIR,`site-photo-events-test-${width}.png`));}
   }
   assert.equal(await b.evaluate("document.querySelectorAll('#experience .chips').length"),0);
-  assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list>li')].filter(x=>getComputedStyle(x).display!=='none').length"),5);
+  assert.equal(await b.evaluate("[...document.querySelectorAll('#exp-list>li')].filter(x=>getComputedStyle(x).display!=='none').length"),state.experiences.filter(x=>!x.sample).length);
   await delay(50);assert.equal(views.length,1);assert.equal(views[0].page,'/');
   await b.evaluate("document.querySelector('.maker').click()");
   await waitFor("document.querySelector('.d-id h1')?.textContent==='シートで変更した造り手'");
+  assert.equal(await b.evaluate("document.querySelector('.d-logo').src.startsWith('data:image/jpeg;base64,')"),true);
+  assert.equal(await b.evaluate("document.querySelector('.d-hero img').src.startsWith('data:image/jpeg;base64,')"),true);
+  assert.equal(await b.evaluate("document.querySelector('.mini a').href"),state.experiences[0].booking_url);
   for(let i=0;i<100&&views.length<2;i++)await delay(20);
   assert.equal(views.length,2);assert.equal(views[1].page,'/makers/'+state.makers[0].id+'/');assert.notEqual(views[0].event_id,views[1].event_id);
   // Cancel navigation after the tracker observes activation; no external request is made.

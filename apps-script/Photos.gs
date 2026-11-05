@@ -1,5 +1,5 @@
 // Only the server reads GITHUB_IMAGE_TOKEN. Images never write to the source branch.
-function photoPath_(path){return typeof path==='string'&&/^uploads\/(experiences|events)\/[a-f0-9]{64}\.jpg$/.test(path);}
+function photoPath_(path){return typeof path==='string'&&/^uploads\/(makers|experiences|events)\/[a-f0-9]{64}\.jpg$/.test(path);}
 function photoRequest_(route,method,payload){
   var token=properties_().getProperty('GITHUB_IMAGE_TOKEN');
   if(!token)throw new Error('写真の保存先がまだ接続されていません。');
@@ -25,7 +25,7 @@ function photoBytes_(base64){
 }
 function uploadPhoto_(request){
   session_(request.token);
-  if(['experiences','events'].indexOf(request.collection)<0)throw new Error('写真を登録する項目を確認してください。');
+  if(['makers','experiences','events'].indexOf(request.collection)<0)throw new Error('写真を登録する項目を確認してください。');
   var bytes=photoBytes_(request.base64),hash=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes).map(function(x){return ('0'+((x+256)%256).toString(16)).slice(-2);}).join('');
   var path='uploads/'+request.collection+'/'+hash+'.jpg',lock=LockService.getScriptLock();lock.waitLock(10000);
   try{
