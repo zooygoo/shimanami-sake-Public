@@ -251,3 +251,6 @@ body{overflow-wrap:anywhere}
 @media(max-width:860px){
  .gallery{grid-template-columns:1fr}
 }
+
+/* Let both bridge cables continue to the outer hero boundary. */
+.hero .wrap{overflow:visible}
