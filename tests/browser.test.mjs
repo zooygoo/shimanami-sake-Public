@@ -49,6 +49,28 @@ test('browser: approved hero content fits the first viewport at 390 and 1366', a
     assert.equal(await b.evaluate("getComputedStyle(document.querySelector('.hero')).backgroundColor"), 'rgb(0, 80, 142)');
   }
 });
+test('browser: both bridge cables reach the hero edge without an interior cutoff',async()=>{
+ for(const width of [861,1024,1366,1920]){
+  await b.open(home,width,900);
+  const cables=await b.evaluate(`(() => {
+   const svg=document.querySelector('.logo-stage svg'),hero=document.querySelector('.hero').getBoundingClientRect();
+   return [...svg.querySelectorAll('line')].map(line=>{
+    const matrix=line.getScreenCTM(),point=(x,y)=>new DOMPoint(x.baseVal.value,y.baseVal.value).matrixTransform(matrix);
+    const start=point(line.x1,line.y1),end=point(line.x2,line.y2),dx=end.x-start.x,dy=end.y-start.y;
+    const t=Math.min(1,dx>0?(hero.right-start.x)/dx:(hero.left-start.x)/dx,(hero.bottom-start.y)/dy)*.99;
+    const x=start.x+dx*t,y=start.y+dy*t;
+    for(let parent=svg.parentElement;parent;parent=parent.parentElement){
+     const style=getComputedStyle(parent),rect=parent.getBoundingClientRect();
+     if(style.overflowX!=='visible'&&(x<rect.left||x>rect.right))return false;
+     if(style.overflowY!=='visible'&&(y<rect.top||y>rect.bottom))return false;
+    }
+    return true;
+   });
+  })()`);
+  assert.deepEqual(cables,[true,true],`${width}px: both cables stay visible up to the hero boundary`);
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+ }
+});
 test('browser: mobile maker logos fill larger equal panels with full-width stacked cards',async()=>{
  for(const width of [360,390,402,430,768,860]){
   await b.open(home,width,874);
