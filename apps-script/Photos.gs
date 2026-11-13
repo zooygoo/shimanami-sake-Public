@@ -6,7 +6,12 @@ function photoRequest_(route,method,payload){
   var options={method:method||'get',muteHttpExceptions:true,headers:{Authorization:'Bearer '+token,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}};
   if(payload){options.contentType='application/json';options.payload=JSON.stringify(payload);}
   var response=UrlFetchApp.fetch('https://api.github.com/repos/zooygoo/shimanami-sake-Public/'+route,options),status=response.getResponseCode();
-  if(status!==404&&(status<200||status>=300))throw new Error('写真の保存先に接続できません。権限と利用上限を確認してください。');
+  if(status!==404&&(status<200||status>=300)){
+    var headers=response.getAllHeaders(),limited=false;
+    Object.keys(headers).forEach(function(key){if(key.toLowerCase()==='x-ratelimit-remaining'&&String(headers[key])==='0'||key.toLowerCase()==='retry-after')limited=true;});
+    var message=status===401?'写真の保存用認証が無効です。トークンの有効期限・失効状態を確認してください':status===429||status===403&&(limited||/rate limit|abuse detection/i.test(response.getContentText()))?'写真の保存先の利用上限に達しました。しばらく待ってから保存し直してください':status===403?'写真の保存先へのアクセスが拒否されました。保存用トークンの権限・承認状態と保存先の制限を確認してください':status>=500?'写真の保存先で一時的な障害が発生しています。しばらく待ってから保存し直してください':'写真の保存先に接続できませんでした';
+    throw new Error(message+'（HTTP '+status+'）。');
+  }
   return {status:status,body:JSON.parse(response.getContentText()||'{}')};
 }
 function photoContent_(path){
