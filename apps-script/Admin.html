@@ -76,8 +76,8 @@ function photoField(box,label){
  const choose=document.createElement('button');choose.type='button';choose.id='photo-choose';choose.className='btn ghost';choose.textContent='写真を選ぶ';choose.dataset.photoControl='true';choose.disabled=input.disabled;choose.addEventListener('click',()=>input.click());
  const image=document.createElement('img');image.id='photo-preview';image.className='photo-preview';image.alt='登録する写真のプレビュー';image.hidden=true;
  const note=document.createElement('p');note.id='photo-note';note.className='small';note.setAttribute('role','status');note.textContent=boot.connected&&boot.photosReady?'JPEG・PNG・WebP、10MB以下。保存時に写真を登録します。':'写真の保存先は接続準備中です。';
- const remove=document.createElement('button');remove.id='photo-remove';remove.type='button';remove.className='btn ghost';remove.textContent='写真を外す';remove.disabled=!boot.connected;remove.hidden=!current.photo;
- remove.addEventListener('click',()=>{current.photo='';pendingPhoto=null;input.value='';image.hidden=true;image.removeAttribute('src');remove.hidden=true;markDirty();note.textContent='保存すると写真の表示を外します。';});
+ const remove=document.createElement('button');remove.id='photo-remove';remove.type='button';remove.className='btn ghost';remove.textContent='削除';remove.disabled=!boot.connected;remove.hidden=!current.photo;
+ remove.addEventListener('click',()=>{current.photo='';pendingPhoto=null;input.value='';image.hidden=true;image.removeAttribute('src');remove.hidden=true;markDirty();note.textContent='保存すると写真を削除します。';});
  input.addEventListener('change',async()=>{
   const file=input.files[0];if(!file||busy)return;busyState(true);note.textContent='写真を読み込んでいます。';
   try{
@@ -108,7 +108,7 @@ function makerMediaField(box,label,key){
  entries.forEach((item,index)=>{const row=document.createElement('div');row.className='maker-media-row';const caption=document.createElement('b');caption.textContent=key==='logo'?'ロゴ':index===0?'1枚目・代表写真':String(index+1)+'枚目';row.append(caption);
  if(item.path||item.pending){const image=document.createElement('img');image.className='photo-preview'+(key==='logo'?' logo-preview':'');image.alt=key==='logo'?'ロゴのプレビュー':String(index+1)+'枚目のプレビュー';row.append(image);makerImagePreview(image,item);}
  const input=picker(item),actions=document.createElement('div');actions.className='photo-actions';actions.append(button(item.path||item.pending?'画像を変更':'画像を選ぶ',()=>input.click(),true));
- if(item.path||item.pending)actions.append(button('表示を外す',()=>{if(key==='logo')makerMedia.logo={path:''};else makerMedia.photos.splice(index,1);changed();}));
+ if(item.path||item.pending)actions.append(button('削除',()=>{if(key==='logo')makerMedia.logo={path:''};else makerMedia.photos.splice(index,1);changed();}));
  if(key==='photos'){for(const [caption,offset] of [['前へ',-1],['後へ',1]]){const move=button(caption,()=>{const target=index+offset;[makerMedia.photos[index],makerMedia.photos[target]]=[makerMedia.photos[target],makerMedia.photos[index]];changed();});move.dataset.boundaryDisabled=String(index+offset<0||index+offset>=entries.length);move.disabled=move.disabled||move.dataset.boundaryDisabled==='true';actions.append(move);}}
  row.append(input,actions);list.append(row);});
  if(key==='photos'&&entries.length<6){const input=picker({path:''});list.append(input,button('写真を追加',()=>input.click(),true));}

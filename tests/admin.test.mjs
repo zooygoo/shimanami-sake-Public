@@ -25,7 +25,7 @@ function backend() {
  const sheet=name=>{if(!sheets.has(name)){const rows=[];sheets.set(name,{rows,getLastRow:()=>rows.length,getLastColumn:()=>rows[0]?.length||0,getRange:(...a)=>range(rows,...a)});}return sheets.get(name);};
  const db={getSheetByName:sheet};
  const ctx=vm.createContext({Date:TestDate,JSON,URL,console,
- UrlFetchApp:{fetch:(url,options)=>{imageRequests.push({url,options});assert.ok(url.startsWith('https://api.github.com/repos/zooygoo/shimanami-sake-Public/'));let status=200,body={};const path=url.split('/contents/')[1]?.split('?')[0];if(imageFailure){status=403;}else if(path){if(options.method==='put'){const payload=JSON.parse(options.payload);assert.equal(payload.branch,'site-images');images.set(path,{content:payload.content,sha:'test-sha'});status=201;}else if(images.has(path)){body=images.get(path);}else status=404;}else if(url.endsWith('/git/ref/heads/site-images')&&!imageBranch)status=404;else if(url.endsWith('/git/refs')&&options.method==='post'){assert.deepEqual(JSON.parse(options.payload),{ref:'refs/heads/site-images',sha:'base-sha'});imageBranch=true;status=201;}else if(url.includes('/git/ref/heads/'))body={object:{sha:'base-sha'}};return {getResponseCode:()=>status,getContentText:()=>JSON.stringify(body)};}},
+ UrlFetchApp:{fetch:(url,options)=>{imageRequests.push({url,options});assert.ok(url.startsWith('https://api.github.com/repos/zooygoo/shimanami-sake-Public/'));let status=200,body={};const path=url.split('/contents/')[1]?.split('?')[0];if(imageFailure){status=403;}else if(path){if(options.method==='put'){const payload=JSON.parse(options.payload);assert.equal(payload.branch,'site-images');images.set(path,{content:payload.content,sha:'test-sha'});status=201;}else if(images.has(path)){body=images.get(path);}else status=404;}else if(url.endsWith('/git/ref/heads/site-images')&&!imageBranch)status=404;else if(url.endsWith('/git/refs')&&options.method==='post'){assert.deepEqual(JSON.parse(options.payload),{ref:'refs/heads/site-images',sha:'base-sha'});imageBranch=true;status=201;}else if(url.includes('/git/ref/heads/'))body={object:{sha:'base-sha'}};return {getResponseCode:()=>status,getAllHeaders:()=>({}),getContentText:()=>JSON.stringify(body)};}},
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)||null,setProperty:(k,v)=>props.set(k,v)})},
  CacheService:{getScriptCache:()=>({get:k=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be read under the shared lock');const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be updated under the shared lock');cache.set(k,{value:v,expires:clock+ttl*1000});},remove:k=>cache.delete(k)})},
  LockService:{getScriptLock:()=>({waitLock(){lockDepth++;},releaseLock(){lockDepth--;}})},
@@ -46,6 +46,25 @@ function backend() {
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
  return {ctx,props,sheets,requireLoginLock:()=>{checkLoginLock=true;},lockDepth:()=>lockDepth,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
+for(const [status,headers,message,expected] of [
+ [401,{},'Bad credentials',/認証.*HTTP 401/],
+ [403,{},'Resource not accessible by personal access token',/権限.*HTTP 403/],
+ [403,{'X-RateLimit-Remaining':'0'},'API rate limit exceeded',/利用上限.*HTTP 403/],
+ [403,{'retry-after':'60'},'secondary rate limit',/利用上限.*HTTP 403/],
+ [403,{},'You have exceeded a secondary rate limit',/利用上限.*HTTP 403/],
+ [429,{},'Too many requests',/利用上限.*HTTP 429/],
+ [503,{},'Service unavailable',/一時的.*HTTP 503/],
+ [422,{},'Validation failed',/HTTP 422/]
+])test(`photo storage reports a safe, specific failure for HTTP ${status} ${message}`,()=>{
+ const b=backend();b.setup();b.props.set('GITHUB_IMAGE_TOKEN','private-image-token');const token=b.login();
+ b.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>status,getAllHeaders:()=>headers,getContentText:()=>JSON.stringify({message,detail:'private-response-body',token:'private-image-token'})});
+ const rows=JSON.stringify([...b.sheets].map(([name,sheet])=>[name,sheet.rows]));
+ const result=b.rpc({action:'upload',token,collection:'makers',base64:Buffer.from([255,216,255,224,0,0,255,217]).toString('base64')});
+ assert.equal(result.ok,false);assert.match(result.error,expected);
+ for(const secret of ['private-image-token','private-response-body',message])assert.ok(!result.error.includes(secret));
+ assert.equal(JSON.stringify([...b.sheets].map(([name,sheet])=>[name,sheet.rows])),rows);
+ assert.equal(b.props.get('REVISION'),undefined);assert.equal(b.images.size,0);assert.equal(b.lockDepth(),0);
+});
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
 });
@@ -240,7 +259,7 @@ for(const collection of ['experiences','events'])test(`${collection}: new entry,
   assert.equal(server.images.size,0);assert.equal(await client.evaluate('window.injected'),undefined);
   await client.evaluate("document.getElementById('review-back').click()");
   server.setImageFailure(true);await client.evaluate("document.getElementById('edit-form').requestSubmit()");
-  await waitFor("!document.getElementById('save').disabled&&document.getElementById('status').textContent.includes('接続できません')");
+  await waitFor("!document.getElementById('save').disabled&&document.getElementById('status').textContent.includes('HTTP 403')");
   assert.equal(saves.length,1);assert.equal(record(),undefined);
   assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
   assert.equal(await client.evaluate("document.getElementById('photo-preview').hidden"),false);
@@ -265,7 +284,9 @@ for(const collection of ['experiences','events'])test(`${collection}: new entry,
   assert.equal((await submit()).ok,true);assert.equal(saves.at(-1).request.create,false);
   assert.notEqual(record().photo,firstPath);assert.equal(server.images.size,2);
   assert.ok(publicHome().includes('data:image/jpeg;base64,'+server.images.get(record().photo).content));
+  assert.equal(await client.evaluate("document.getElementById('photo-remove').textContent"),'削除');
   await client.evaluate("document.getElementById('photo-remove').click()");
+  assert.equal(await client.evaluate("document.getElementById('photo-note').textContent"),'保存すると写真を削除します。');
   assert.equal((await submit()).ok,true);assert.equal(record().photo,'');assert.equal(server.images.size,2);
   assert.equal(server.images.get(firstPath).content,firstContent);assert.ok(!publicHome().includes('data:image/jpeg;base64,'));
   assert.deepEqual(server.rpc({action:'load',token}).data.makers,seed.makers);
@@ -379,6 +400,14 @@ test('maker media editor uploads only on save, retains a failed selection and pe
  const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
  const {client,saves,waitFor,close}=await adminPage(server,token);
  try{
+  for(const width of [390,1366]){
+   await client.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   assert.equal(await client.evaluate("[...document.querySelectorAll('#fields button')].filter(x=>x.textContent==='削除').length"),seed.makers[0].photos.length+Number(!!seed.makers[0].logo));
+   assert.equal(await client.evaluate("[...document.querySelectorAll('#fields button')].some(x=>/外す/.test(x.textContent))"),false);
+   assert.equal(await client.evaluate("document.documentElement.scrollWidth<=innerWidth"),true);
+   assert.equal(await client.evaluate("(()=>{const button=[...document.querySelectorAll('#fields button')].find(x=>x.textContent==='削除');button.focus();return document.activeElement===button&&button.getBoundingClientRect().height>=44;})()"),true);
+   if(process.env.SCREENSHOT_DIR){await client.evaluate("document.getElementById('input-photos').scrollIntoView({block:'center'})");await client.screenshot(join(process.env.SCREENSHOT_DIR,`maker-photo-delete-${width}.png`));}
+  }
   const base64=readFileSync(new URL('../assets/makers/omishima-brewery.png',import.meta.url)).toString('base64');
   async function choose(selector){await client.evaluate(`(()=>{const bytes=Uint8Array.from(atob(${JSON.stringify(base64)}),c=>c.charCodeAt(0)),transfer=new DataTransfer();transfer.items.add(new File([bytes],'test-logo.png',{type:'image/png'}));const input=document.querySelector(${JSON.stringify(selector)});input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);await waitFor("!document.getElementById('save').disabled");}
   await choose('#input-logo input[type=file]');
@@ -386,9 +415,10 @@ test('maker media editor uploads only on save, retains a failed selection and pe
   await client.evaluate("document.getElementById('preview').click()");
   assert.equal(await client.evaluate("document.querySelector('#review-fields .logo-preview').src.startsWith('data:image/jpeg;base64,')"),true);
   await client.evaluate("document.getElementById('review-back').click()");
+  const beforeFailure=JSON.stringify(server.sheets.get('造り手').rows);
   server.setImageFailure(true);
   await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
-  assert.equal(saves.length,0);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
+  assert.equal(saves.length,0);assert.match(await client.evaluate("document.getElementById('status').textContent"),/権限.*HTTP 403/);assert.equal(JSON.stringify(server.sheets.get('造り手').rows),beforeFailure);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
   server.setImageFailure(false);
   await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
   assert.equal(saves.at(-1).result.ok,true);assert.match(server.rpc({action:'load',token}).data.makers[0].logo,/^uploads\/makers\//);
@@ -399,7 +429,7 @@ test('maker media editor uploads only on save, retains a failed selection and pe
   await client.evaluate("[...document.querySelectorAll('#input-photos .maker-media-row')][1].querySelectorAll('button')[2].click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
   const expected=[...seed.makers[winery].photos];[expected[0],expected[1]]=[expected[1],expected[0]];
   assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected);
-  await client.evaluate("document.querySelector('#input-photos .maker-media-row button:nth-child(2)').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
+  await client.evaluate("[...document.querySelectorAll('#input-photos .maker-media-row button')].find(x=>x.textContent==='削除').click();document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
   assert.deepEqual(server.rpc({action:'load',token}).data.makers[winery].photos,expected.slice(1));
   await choose('#input-photos > input[type=file]');
   await client.evaluate("document.getElementById('preview').click()");
