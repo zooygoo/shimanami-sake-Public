@@ -14,7 +14,7 @@ const code=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8'
 const seed=Object.fromEntries(['makers','experiences','events'].map(k=>[k,JSON.parse(readFileSync(new URL(`../data/${k}.json`,import.meta.url),'utf8'))]));
 function backend() {
  const props=new Map([['SPREADSHEET_ID','test-sheet'],['OWNER_EMAIL','owner@example.test'],['PASSWORD_SALT','salt'],['PASSWORD_PEPPER','pepper']]);
- const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],images=new Map(); let email='owner@example.test',clock=Date.now(),imageFailure=false,imageBranch=false,lockDepth=0,checkLoginLock=false;
+ const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],photoSheet='写真データ'; let email='owner@example.test',clock=Date.now(),imageFailure=false,lockDepth=0,checkLoginLock=false;
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
  const range=(rows,r,c,n=1,w=1)=>({
   getValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>rows[r-1+i]?.[c-1+j]??'')),
@@ -23,9 +23,12 @@ function backend() {
   setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v;});});}
  });
  const sheet=name=>{if(!sheets.has(name)){const rows=[];sheets.set(name,{rows,getLastRow:()=>rows.length,getLastColumn:()=>rows[0]?.length||0,getRange:(...a)=>range(rows,...a)});}return sheets.get(name);};
- const db={getSheetByName:sheet};
+ // The photo sheet is absent until the server creates it. Each access is recorded so tests can prove when storage is touched.
+ const db={getSheetByName:name=>{if(name!==photoSheet)return sheet(name);imageRequests.push({options:{method:'get'}});if(imageFailure)throw new Error('private-storage-detail');return sheets.has(name)?sheet(name):null;},
+  insertSheet:name=>{imageRequests.push({options:{method:'post'}});const made=sheet(name),getRange=made.getRange;made.hideSheet=()=>{made.hidden=true;};made.getRange=(...a)=>{const cells=getRange(...a),write=cells.setRichTextValues;cells.setRichTextValues=values=>{imageRequests.push({options:{method:'put'}});write(values);};return cells;};return made;}};
+ const photoRows=()=>(sheets.get(photoSheet)?.rows||[]).filter(row=>row&&row[0]);
+ const images={get size(){return photoRows().length;},has:path=>photoRows().some(row=>row[0]===path),get:path=>{const row=photoRows().find(row=>row[0]===path);return row&&{content:row.slice(1).join('')};}};
  const ctx=vm.createContext({Date:TestDate,JSON,URL,console,
- UrlFetchApp:{fetch:(url,options)=>{imageRequests.push({url,options});assert.ok(url.startsWith('https://api.github.com/repos/zooygoo/shimanami-sake-Public/'));let status=200,body={};const path=url.split('/contents/')[1]?.split('?')[0];if(imageFailure){status=403;}else if(path){if(options.method==='put'){const payload=JSON.parse(options.payload);assert.equal(payload.branch,'site-images');images.set(path,{content:payload.content,sha:'test-sha'});status=201;}else if(images.has(path)){body=images.get(path);}else status=404;}else if(url.endsWith('/git/ref/heads/site-images')&&!imageBranch)status=404;else if(url.endsWith('/git/refs')&&options.method==='post'){assert.deepEqual(JSON.parse(options.payload),{ref:'refs/heads/site-images',sha:'base-sha'});imageBranch=true;status=201;}else if(url.includes('/git/ref/heads/'))body={object:{sha:'base-sha'}};return {getResponseCode:()=>status,getAllHeaders:()=>({}),getContentText:()=>JSON.stringify(body)};}},
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)||null,setProperty:(k,v)=>props.set(k,v)})},
  CacheService:{getScriptCache:()=>({get:k=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be read under the shared lock');const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be updated under the shared lock');cache.set(k,{value:v,expires:clock+ttl*1000});},remove:k=>cache.delete(k)})},
  LockService:{getScriptLock:()=>({waitLock(){lockDepth++;},releaseLock(){lockDepth--;}})},
@@ -46,24 +49,22 @@ function backend() {
  const login=()=>rpc({action:'login',verifier:'a'.repeat(64)}).token;
  return {ctx,props,sheets,requireLoginLock:()=>{checkLoginLock=true;},lockDepth:()=>lockDepth,openedSheets,imageRequests,images,rpc,setup,login,clearCache:()=>cache.clear(),setImageFailure:v=>{imageFailure=v;},setEmail:v=>{email=v;},advance:ms=>{clock+=ms;}};
 }
-for(const [status,headers,message,expected] of [
- [401,{},'Bad credentials',/認証.*HTTP 401/],
- [403,{},'Resource not accessible by personal access token',/権限.*HTTP 403/],
- [403,{'X-RateLimit-Remaining':'0'},'API rate limit exceeded',/利用上限.*HTTP 403/],
- [403,{'retry-after':'60'},'secondary rate limit',/利用上限.*HTTP 403/],
- [403,{},'You have exceeded a secondary rate limit',/利用上限.*HTTP 403/],
- [429,{},'Too many requests',/利用上限.*HTTP 429/],
- [503,{},'Service unavailable',/一時的.*HTTP 503/],
- [422,{},'Validation failed',/HTTP 422/]
-])test(`photo storage reports a safe, specific failure for HTTP ${status} ${message}`,()=>{
- const b=backend();b.setup();b.props.set('GITHUB_IMAGE_TOKEN','private-image-token');const token=b.login();
- b.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>status,getAllHeaders:()=>headers,getContentText:()=>JSON.stringify({message,detail:'private-response-body',token:'private-image-token'})});
+test('photo storage failure reports a safe message and writes nothing',()=>{
+ const b=backend();b.setup();const token=b.login();b.setImageFailure(true);
  const rows=JSON.stringify([...b.sheets].map(([name,sheet])=>[name,sheet.rows]));
  const result=b.rpc({action:'upload',token,collection:'makers',base64:Buffer.from([255,216,255,224,0,0,255,217]).toString('base64')});
- assert.equal(result.ok,false);assert.match(result.error,expected);
- for(const secret of ['private-image-token','private-response-body',message])assert.ok(!result.error.includes(secret));
+ assert.equal(result.ok,false);assert.match(result.error,/写真の保存先で問題が発生しました/);assert.ok(!result.error.includes('private-storage-detail'));
  assert.equal(JSON.stringify([...b.sheets].map(([name,sheet])=>[name,sheet.rows])),rows);
  assert.equal(b.props.get('REVISION'),undefined);assert.equal(b.images.size,0);assert.equal(b.lockDepth(),0);
+});
+test('large photos are split below the cell limit, stay text and read back unchanged',()=>{
+ const b=backend();b.setup();const token=b.login();
+ const bytes=Buffer.alloc(255000,251);bytes.set([255,216,255,224]);bytes.set([255,217],bytes.length-2);const base64=bytes.toString('base64');
+ const uploaded=b.rpc({action:'upload',token,collection:'makers',base64});assert.equal(uploaded.ok,true);
+ const row=b.sheets.get('写真データ').rows[0];assert.equal(row[0],uploaded.path);assert.equal(row.length,8);
+ assert.ok(row.slice(1).every(cell=>typeof cell==='string'&&cell.length<=49000));assert.ok(row.slice(1).some(cell=>/^[+/]/.test(cell)));
+ assert.equal(b.rpc({action:'photo',token,path:uploaded.path}).base64,base64);assert.equal(b.sheets.get('写真データ').hidden,true);
+ assert.equal(b.rpc({action:'upload',token,collection:'makers',base64:'A'.repeat(341340)}).ok,false);assert.equal(b.images.size,1);
 });
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));
@@ -79,12 +80,12 @@ function httpAdmin(server,request){return JSON.parse(server.ctx.doPost({postData
 test('site admin bootstrap exposes only connection flags and public salt without a Google account',()=>{
  const b=backend();b.setup();b.setEmail('');const before=JSON.stringify([...b.props]);
  const result=JSON.parse(b.ctx.doGet({parameter:{action:'admin-bootstrap'}}).text);
- assert.deepEqual(result,{ok:true,apiVersion:1,connected:true,photosReady:false,salt:'salt',needsSetup:false});
+ assert.deepEqual(result,{ok:true,apiVersion:1,connected:true,photosReady:true,salt:'salt',needsSetup:false});
  for(const secret of ['PASSWORD_HASH','PASSWORD_PEPPER','owner@example.test','pepper','test-sheet'])assert.ok(!JSON.stringify(result).includes(secret));
  assert.equal(JSON.stringify([...b.props]),before);
 });
 test('site admin HTTP retains session checks and existing save, photo and statistics functions',()=>{
- const b=backend();b.setup();b.setEmail('');b.props.set('GITHUB_IMAGE_TOKEN','server-only-token');
+ const b=backend();b.setup();b.setEmail('');
  for(const action of ['load','stats','save','upload','photo'])assert.equal(httpAdmin(b,{action,token:'forged'}).ok,false,action);
  assert.equal(httpAdmin(b,{action:'login',verifier:'b'.repeat(64)}).ok,false);
  const {token}=httpAdmin(b,{action:'login',verifier:'a'.repeat(64)});assert.ok(token);
@@ -125,7 +126,7 @@ async function adminPage(server,token){
  try{
   const source=readFileSync(new URL('../apps-script/Admin.html',import.meta.url),'utf8');
   const logo='data:image/png;base64,'+readFileSync(new URL('../assets/brand/shimanami-logo.png',import.meta.url)).toString('base64');
-  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:!!server.props.get('GITHUB_IMAGE_TOKEN')})));
+  await writeFile(join(fixture,'index.html'),source.replace('__LOGO_DATA__',logo).replace('__BOOTSTRAP_JSON__',JSON.stringify({connected:true,salt:'salt',photosReady:true})));
   client=await browser(fixture);
   await client.send('Network.setBlockedURLs',{urls:['https://fonts.googleapis.com/*','https://fonts.gstatic.com/*']});
   await client.send('Fetch.enable',{patterns:[{urlPattern:'*://*/assets/*'}]});
@@ -184,7 +185,7 @@ test('adding an experience or event with an existing ID cannot overwrite it',()=
   assert.equal(b.props.get('REVISION'),undefined);
  }
 });
-for(const collection of ['experiences','events'])test(`${collection}: text-only registration, duplicate rejection and relogin preserve every existing row without photo credentials`,async()=>{
+for(const collection of ['experiences','events'])test(`${collection}: text-only registration, duplicate rejection and relogin preserve every existing row without a photo`,async()=>{
  const server=backend();server.setup();
  const password=randomUUID();
  server.props.set('PASSWORD_HASH',server.ctx.hash_(pbkdf2Sync(password,'salt',600000,32,'sha256').toString('hex')));
@@ -200,7 +201,7 @@ for(const collection of ['experiences','events'])test(`${collection}: text-only 
  };
  try{
   await client.evaluate(`document.querySelector('[data-section=${collection}]').click();document.getElementById('add').click();document.getElementById('input-id').value=${JSON.stringify(id)};document.getElementById('input-title').value=${JSON.stringify(title)};document.getElementById('input-description').value=${JSON.stringify(description)};document.getElementById('input-sample').checked=true;`+(collection==='events'?"document.getElementById('input-start_date').value='2099-01-01';document.getElementById('input-end_date').value='2099-01-02';":''));
-  assert.equal(await client.evaluate("document.getElementById('photo-choose').disabled"),true);
+  assert.equal(await client.evaluate("document.getElementById('photo-choose').disabled"),false);
   assert.deepEqual(await submit(),{ok:true,revision:1});
   const loaded=server.rpc({action:'load',token});
   const record=loaded.data[collection].find(x=>x.id===id);
@@ -227,12 +228,12 @@ for(const collection of ['experiences','events'])test(`${collection}: text-only 
   assert.deepEqual(server.rpc({action:'load',token:fresh}).data,loaded.data);
   const publicData=server.ctx.publicData_(true),home=renderPages(publicData.makers,publicData.experiences,publicData.events).get('index.html');
   assert.ok(home.includes('登録確認 &lt;&gt;&amp;'));assert.ok(home.includes(description));
-  assert.equal(server.imageRequests.length,0);assert.equal(server.props.get('GITHUB_IMAGE_TOKEN'),undefined);
+  assert.equal(server.imageRequests.length,0);
   for(const [name,rows] of savedRows)assert.equal(JSON.stringify(server.sheets.get(name).rows),rows);
  }finally{await close();}
 });
 for(const collection of ['experiences','events'])test(`${collection}: new entry, duplicate rejection and photo lifecycle use the real server`,async()=>{
- const server=backend();server.setup();const token=server.login();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ const server=backend();server.setup();const token=server.login();
  const {client,saves,waitFor,open,close}=await adminPage(server,token);
  const id='new-'+collection,title='新しい内容 <>&',description='=SUM(A1) <script>window.injected=true</script>';
  const loaded=()=>server.rpc({action:'load',token}).data[collection];
@@ -259,7 +260,7 @@ for(const collection of ['experiences','events'])test(`${collection}: new entry,
   assert.equal(server.images.size,0);assert.equal(await client.evaluate('window.injected'),undefined);
   await client.evaluate("document.getElementById('review-back').click()");
   server.setImageFailure(true);await client.evaluate("document.getElementById('edit-form').requestSubmit()");
-  await waitFor("!document.getElementById('save').disabled&&document.getElementById('status').textContent.includes('HTTP 403')");
+  await waitFor("!document.getElementById('save').disabled&&document.getElementById('status').textContent.includes('写真の保存先で問題が発生しました')");
   assert.equal(saves.length,1);assert.equal(record(),undefined);
   assert.equal(await client.evaluate("document.getElementById('input-title').value"),title);
   assert.equal(await client.evaluate("document.getElementById('photo-preview').hidden"),false);
@@ -350,16 +351,15 @@ test('anonymous read and view requests cannot select a different spreadsheet or 
  assert.equal(b.rpc({action:'save',token:'forged',spreadsheet_id:'attacker-sheet'}).ok,false);
 });
 
-test('photo uploads require a session and server credential, stay in the image branch and retry without duplicate writes',()=>{
+test('photo uploads require a session, stay in the photo sheet and retry without duplicate writes',()=>{
  const b=backend(),base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
  assert.equal(b.rpc({action:'upload',collection:'events',base64}).ok,false);assert.equal(b.imageRequests.length,0);
- b.setup();const token=b.login();assert.equal(b.rpc({action:'upload',token,collection:'events',base64}).ok,false);assert.equal(b.imageRequests.length,0);
- b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ b.setup();const token=b.login();
  const request={action:'upload',token,collection:'events',base64,repository:'attacker/repo',branch:'main'};
  const uploaded=b.rpc(request);assert.equal(uploaded.ok,true);assert.match(uploaded.path,/^uploads\/events\/[a-f0-9]{64}\.jpg$/);
  assert.equal(b.imageRequests.filter(x=>x.options.method==='post').length,1);assert.equal(b.rpc(request).path,uploaded.path);assert.equal(b.imageRequests.filter(x=>x.options.method==='put').length,1);
  const record={...seed.events[0],photo:uploaded.path};assert.equal(b.rpc({action:'save',collection:'events',record,revision:0,token}).ok,true);
- const snapshot=b.ctx.publicData_(true);assert.equal(snapshot.events[0].photo,'data:image/jpeg;base64,'+base64);assert.ok(!JSON.stringify(snapshot).includes('test-only-secret'));
+ const snapshot=b.ctx.publicData_(true);assert.equal(snapshot.events[0].photo,'data:image/jpeg;base64,'+base64);
  assert.equal(b.rpc({action:'photo',token,path:uploaded.path}).base64,base64);
  assert.equal(b.rpc({action:'photo',path:uploaded.path}).ok,false);
  for(const value of ['<svg>script</svg>','A'.repeat(350001),'not base64'])assert.equal(b.rpc({...request,base64:value}).ok,false);
@@ -368,8 +368,8 @@ test('photo uploads require a session and server credential, stay in the image b
  assert.equal(b.rpc({action:'load',token}).data.events[0].photo,uploaded.path);assert.equal(b.ctx.publicData_(true).events[0].photo,'');
 });
 
-test('maker media persists in existing columns and resolves publicly without exposing credentials',()=>{
- const b=backend();b.setup();const token=b.login();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+test('maker media persists in existing columns and resolves publicly',()=>{
+ const b=backend();b.setup();const token=b.login();
  const before=structuredClone([...b.sheets].map(([name,sheet])=>[name,sheet.rows]));
  const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
  assert.equal(b.rpc({action:'upload',collection:'makers',base64}).ok,false);
@@ -381,7 +381,6 @@ test('maker media persists in existing columns and resolves publicly without exp
  const snapshot=JSON.parse(JSON.stringify(b.ctx.publicData_(true)));
  assert.equal(snapshot.makers[0].logo,'data:image/jpeg;base64,'+base64);
  assert.deepEqual(snapshot.makers[0].photos,['data:image/jpeg;base64,'+base64,'photos/winery-tanks.jpg']);
- assert.ok(!JSON.stringify(snapshot).includes('test-only-secret'));
  assert.equal(JSON.stringify(b.sheets.get('造り手').rows[0]),JSON.stringify(before[0][1][0]));
  assert.equal(JSON.stringify(b.sheets.get('造り手').rows.slice(2)),JSON.stringify(before[0][1].slice(2)));
  assert.equal(JSON.stringify(b.sheets.get('体験').rows),JSON.stringify(before[1][1]));assert.equal(JSON.stringify(b.sheets.get('イベント').rows),JSON.stringify(before[2][1]));
@@ -397,7 +396,7 @@ test('maker media rejects invalid paths, missing files, excess photos and coordi
  assert.equal(JSON.stringify(b.sheets.get('造り手').rows),JSON.stringify(before));assert.equal(b.props.get('REVISION'),undefined);
 });
 test('maker media editor uploads only on save, retains a failed selection and persists order and removals',async()=>{
- const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
+ const server=backend();server.setup();const token=server.login();
  const {client,saves,waitFor,close}=await adminPage(server,token);
  try{
   for(const width of [390,1366]){
@@ -418,7 +417,7 @@ test('maker media editor uploads only on save, retains a failed selection and pe
   const beforeFailure=JSON.stringify(server.sheets.get('造り手').rows);
   server.setImageFailure(true);
   await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
-  assert.equal(saves.length,0);assert.match(await client.evaluate("document.getElementById('status').textContent"),/権限.*HTTP 403/);assert.equal(JSON.stringify(server.sheets.get('造り手').rows),beforeFailure);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
+  assert.equal(saves.length,0);assert.match(await client.evaluate("document.getElementById('status').textContent"),/写真の保存先で問題が発生しました/);assert.equal(JSON.stringify(server.sheets.get('造り手').rows),beforeFailure);assert.equal(await client.evaluate("document.querySelector('#input-logo img').src.startsWith('data:image/jpeg;base64,')"),true);
   server.setImageFailure(false);
   await client.evaluate("document.getElementById('edit-form').requestSubmit()");await waitFor("!document.getElementById('save').disabled");
   assert.equal(saves.at(-1).result.ok,true);assert.match(server.rpc({action:'load',token}).data.makers[0].logo,/^uploads\/makers\//);
@@ -449,7 +448,7 @@ test('the legacy event sheet gains only the trailing photo header when an authen
  assert.equal(sheet.rows[0].at(-1),'photo');assert.equal(JSON.stringify(sheet.rows.map(row=>row.slice(0,8).map(String))),JSON.stringify(before.map(row=>row.map(String))));assert.equal(b.rpc({action:'load',token}).ok,true);
 });
 test('photo replacement and removal persist after reload and keep the original stored images',()=>{
- const b=backend();b.setup();const token=b.login();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');
+ const b=backend();b.setup();const token=b.login();
  for(const collection of ['experiences','events']){
   const photos=[224,225].map(marker=>Buffer.from([255,216,255,marker,0,0,255,217]).toString('base64'));
   const paths=[];let record={...seed[collection][0]};
@@ -492,7 +491,7 @@ test('login attempts keep the shared lock through count checks and release it on
 });
 
 test('text-only edits keep an existing uploaded photo during image storage outages',()=>{
- const b=backend();b.setup();b.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=b.login();
+ const b=backend();b.setup();const token=b.login();
  const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
  for(const collection of ['experiences','events']){
   b.setImageFailure(false);
@@ -514,7 +513,7 @@ test('text-only edits keep an existing uploaded photo during image storage outag
 });
 
 for(const collection of ['experiences','events'])test(`${collection}: browser text save survives a real server image outage`,async()=>{
- const server=backend();server.setup();server.props.set('GITHUB_IMAGE_TOKEN','test-only-secret');const token=server.login();
+ const server=backend();server.setup();const token=server.login();
  const base64=Buffer.from([255,216,255,224,0,0,255,217]).toString('base64');
  const path=server.rpc({action:'upload',token,collection,base64}).path;
  assert.equal(server.rpc({action:'save',token,collection,record:{...seed[collection][0],photo:path},revision:0}).ok,true);
@@ -716,7 +715,7 @@ async function siteAdminPage(server,{initialFailure=false,oldServer=false}={}){
  }catch(error){if(client)await client.close();await rm(fixture,{recursive:true,force:true});throw error;}
 }
 test('site admin browser signs in, saves photos, reads statistics and logs out without Google navigation or cookies',async()=>{
- const server=backend();server.rpc({action:'setup',verifier:pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')});server.setEmail('');server.props.set('GITHUB_IMAGE_TOKEN','test-only-token');
+ const server=backend();server.rpc({action:'setup',verifier:pbkdf2Sync('1234','salt',600000,32,'sha256').toString('hex')});server.setEmail('');
  const experiences=server.sheets.get('体験').rows;experiences[1][experiences[0].indexOf('photo')]='';
  const page=await siteAdminPage(server),{client,waitFor}=page;
  try{

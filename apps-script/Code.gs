@@ -229,7 +229,7 @@ function doGet(event){
   var params=event&&event.parameter||{};
   if(params.action==='admin-bootstrap'){
     var settings=properties_();
-    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('GITHUB_IMAGE_TOKEN'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ok:true,apiVersion:1,connected:!!settings.getProperty('SPREADSHEET_ID'),photosReady:!!settings.getProperty('SPREADSHEET_ID'),salt:settings.getProperty('PASSWORD_SALT')||'',needsSetup:!settings.getProperty('PASSWORD_HASH')})).setMimeType(ContentService.MimeType.JSON);
   }
   if(params.action==='public'){
     if(!/^__sakeData_[a-z0-9]+$/.test(params.callback||''))return ContentService.createTextOutput('{}').setMimeType(ContentService.MimeType.JSON);
@@ -238,7 +238,7 @@ function doGet(event){
   var props=properties_();
   if(!props.getProperty('PASSWORD_SALT'))props.setProperty('PASSWORD_SALT',uuid_());
   var owner=props.getProperty('OWNER_EMAIL'),active=Session.getActiveUser().getEmail();
-  var bootstrap={connected:!!props.getProperty('SPREADSHEET_ID'),photosReady:!!props.getProperty('GITHUB_IMAGE_TOKEN'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
+  var bootstrap={connected:!!props.getProperty('SPREADSHEET_ID'),photosReady:!!props.getProperty('SPREADSHEET_ID'),salt:props.getProperty('PASSWORD_SALT'),needsSetup:!props.getProperty('PASSWORD_HASH'),canSetup:!!owner&&!!active&&owner.toLowerCase()===active.toLowerCase()};
   var html=HtmlService.createHtmlOutputFromFile('Admin').getContent().replace('__BOOTSTRAP_JSON__',JSON.stringify(bootstrap).replace(/</g,'\\u003c'));
   return HtmlService.createHtmlOutput(html).setTitle('SHIMANAMIの酒 管理画面');
 }
