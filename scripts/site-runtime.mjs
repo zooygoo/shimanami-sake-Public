@@ -25,6 +25,8 @@ export function loadPublicData(endpoint){
     const timer=setTimeout(()=>{clear();reject(new Error('timeout'));},15000);
     window[name]=data=>{clear();if(!['makers','experiences','events'].every(k=>Array.isArray(data?.[k])))reject(new Error('invalid data'));else resolve(data);};
     script.onerror=()=>{clear();reject(new Error('connection failed'));};
+    // Load without cookies: Google refuses this address when the browser is signed in to more than one Google account.
+    script.crossOrigin='anonymous';
     script.src=endpoint+'?action=public&callback='+name;
     document.head.append(script);
   });
