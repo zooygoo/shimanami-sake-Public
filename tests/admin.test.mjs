@@ -23,11 +23,12 @@ function backend() {
   setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v;});});}
  });
  const sheet=name=>{if(!sheets.has(name)){const rows=[];sheets.set(name,{rows,getLastRow:()=>rows.length,getLastColumn:()=>rows[0]?.length||0,getRange:(...a)=>range(rows,...a)});}return sheets.get(name);};
- // The photo sheet is absent until the server creates it. Each access is recorded so tests can prove when storage is touched.
+ // The photo sheet is absent until the server creates it. Like the real sheet (seen in production on 2026-11-15), it turns text beginning with + or = into a formula error.
+ // Each access is recorded so tests can prove when storage is touched.
  const db={getSheetByName:name=>{if(name!==photoSheet)return sheet(name);imageRequests.push({options:{method:'get'}});if(imageFailure)throw new Error('private-storage-detail');return sheets.has(name)?sheet(name):null;},
-  insertSheet:name=>{imageRequests.push({options:{method:'post'}});const made=sheet(name),getRange=made.getRange;made.hideSheet=()=>{made.hidden=true;};made.getRange=(...a)=>{const cells=getRange(...a),write=cells.setRichTextValues;cells.setRichTextValues=values=>{imageRequests.push({options:{method:'put'}});write(values);};return cells;};return made;}};
+  insertSheet:name=>{imageRequests.push({options:{method:'post'}});const made=sheet(name),getRange=made.getRange;made.hideSheet=()=>{made.hidden=true;};made.getRange=(...a)=>{const cells=getRange(...a),write=cells.setRichTextValues;cells.setRichTextValues=values=>{imageRequests.push({options:{method:'put'}});write(values.map(line=>line.map(cell=>/^[+=]/.test(cell.text)?{text:'#ERROR!'}:cell)));};return cells;};return made;}};
  const photoRows=()=>(sheets.get(photoSheet)?.rows||[]).filter(row=>row&&row[0]);
- const images={get size(){return photoRows().length;},has:path=>photoRows().some(row=>row[0]===path),get:path=>{const row=photoRows().find(row=>row[0]===path);return row&&{content:row.slice(1).join('')};}};
+ const images={get size(){return photoRows().length;},has:path=>photoRows().some(row=>row[0]===path),get:path=>{const row=photoRows().find(row=>row[0]===path);return row&&{content:row.slice(1).map(cell=>cell.slice(2)).join('')};}};
  const ctx=vm.createContext({Date:TestDate,JSON,URL,console,
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)||null,setProperty:(k,v)=>props.set(k,v)})},
  CacheService:{getScriptCache:()=>({get:k=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be read under the shared lock');const x=cache.get(k);return x&&x.expires>clock?x.value:null;},put:(k,v,ttl)=>{if(checkLoginLock&&k==='login-failures')assert.ok(lockDepth>0,'login failure count must be updated under the shared lock');cache.set(k,{value:v,expires:clock+ttl*1000});},remove:k=>cache.delete(k)})},
@@ -62,7 +63,7 @@ test('large photos are split below the cell limit, stay text and read back uncha
  const bytes=Buffer.alloc(255000,251);bytes.set([255,216,255,224]);bytes.set([255,217],bytes.length-2);const base64=bytes.toString('base64');
  const uploaded=b.rpc({action:'upload',token,collection:'makers',base64});assert.equal(uploaded.ok,true);
  const row=b.sheets.get('写真データ').rows[0];assert.equal(row[0],uploaded.path);assert.equal(row.length,8);
- assert.ok(row.slice(1).every(cell=>typeof cell==='string'&&cell.length<=49000));assert.ok(row.slice(1).some(cell=>/^[+/]/.test(cell)));
+ assert.ok(row.slice(1).every(cell=>typeof cell==='string'&&cell.length<=50000&&!cell.includes('#ERROR!')));assert.ok(base64.slice(49000).startsWith('+'),'this photo has pieces that begin with +');
  assert.equal(b.rpc({action:'photo',token,path:uploaded.path}).base64,base64);assert.equal(b.sheets.get('写真データ').hidden,true);
  assert.equal(b.rpc({action:'upload',token,collection:'makers',base64:'A'.repeat(341340)}).ok,false);assert.equal(b.images.size,1);
 });

@@ -9,12 +9,13 @@ function photoSheet_(create){
   }catch(error){throw new Error('写真の保存先で問題が発生しました。しばらく待ってから保存し直してください。');}
 }
 // One row per photo: the path, then the base64 text split below the 50,000-character cell limit.
+// Each piece starts with 'p:' because the sheet reads text beginning with + or = as a formula, even through rich text writes.
 function photoRead_(sheet,path){
   try{
     var last=sheet?sheet.getLastRow():0;
     if(!last)return '';
     var index=sheet.getRange(1,1,last,1).getDisplayValues().findIndex(function(row){return row[0]===path;});
-    return index<0?'':sheet.getRange(index+1,2,1,7).getDisplayValues()[0].join('');
+    return index<0?'':sheet.getRange(index+1,2,1,7).getDisplayValues()[0].map(function(cell){return cell.slice(2);}).join('');
   }catch(error){throw new Error('写真の保存先で問題が発生しました。しばらく待ってから保存し直してください。');}
 }
 function photoContent_(path){
@@ -39,8 +40,7 @@ function uploadPhoto_(request){
     var sheet=photoSheet_(true),existing=photoRead_(sheet,path);
     if(!existing){
       var cells=[path];
-      for(var i=0;i<7;i++)cells.push(request.base64.slice(i*49000,(i+1)*49000));
-      // Rich text writes keep every piece as text, never as a spreadsheet formula.
+      for(var i=0;i<7;i++){var piece=request.base64.slice(i*49000,(i+1)*49000);cells.push(piece?'p:'+piece:'');}
       try{sheet.getRange(sheet.getLastRow()+1,1,1,8).setRichTextValues([cells.map(function(text){return SpreadsheetApp.newRichTextValue().setText(text).build();})]);}
       catch(error){throw new Error('写真の保存先で問題が発生しました。しばらく待ってから保存し直してください。');}
     }else if(existing!==request.base64)throw new Error('保存先の写真が一致しません。');
