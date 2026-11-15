@@ -26,8 +26,12 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   b.on('Fetch.requestPaused',async event=>{
    try{
     let body,mime;if(event.request.method==='POST'){views.push(JSON.parse(event.request.postData));body='{"ok":true}';mime='application/json';}
-    else{const callback=new URL(event.request.url).searchParams.get('callback');assert.match(callback,/^__sakeData_[a-z0-9]+$/);body=callback+'('+JSON.stringify(state).replaceAll('<','\\u003c')+');';mime='text/javascript';}
-    await b.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:mime}],body:Buffer.from(body).toString('base64')});
+    else{
+     // Google refuses this address when the browser sends cookies of more than one Google account (seen on the real site on 2026-11-15).
+     // Only a load without cookies carries an Origin header, so anything else is failed like the real service does.
+     if(!Object.keys(event.request.headers).some(name=>name.toLowerCase()==='origin')){await b.send('Fetch.failRequest',{requestId:event.requestId,errorReason:'Failed'});return;}
+     const callback=new URL(event.request.url).searchParams.get('callback');assert.match(callback,/^__sakeData_[a-z0-9]+$/);body=callback+'('+JSON.stringify(state).replaceAll('<','\\u003c')+');';mime='text/javascript';}
+    await b.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:mime},{name:'Access-Control-Allow-Origin',value:'*'}],body:Buffer.from(body).toString('base64')});
    }catch(error){interceptionError=error;}
   });
   const waitFor=async expression=>{for(let i=0;i<200;i++){if(interceptionError)throw interceptionError;if(await b.evaluate(expression))return;await delay(20);}throw new Error('Timed out: '+expression);};
