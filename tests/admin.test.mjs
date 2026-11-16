@@ -16,17 +16,25 @@ function backend() {
  const props=new Map([['SPREADSHEET_ID','test-sheet'],['OWNER_EMAIL','owner@example.test'],['PASSWORD_SALT','salt'],['PASSWORD_PEPPER','pepper']]);
  const cache=new Map(),sheets=new Map(),openedSheets=[],imageRequests=[],photoSheet='写真データ'; let email='owner@example.test',clock=Date.now(),imageFailure=false,lockDepth=0,checkLoginLock=false;
  class TestDate extends Date { constructor(...a){super(...(a.length?a:[clock]));} static now(){return clock;} }
+ // Behaves like the real sheet, measured in production on 2026-11-16: text beginning with = or + is read as a formula,
+ // digits lose leading zeros, and a leading apostrophe is dropped. Only a plain write of apostrophe plus text keeps the text exactly.
+ const typed=value=>{
+  if(typeof value!=='string')return value;
+  if(value.startsWith("'"))return value.slice(1);
+  if(/^[=+]/.test(value))return '#ERROR!';
+  return /^0\d+$/.test(value)?String(Number(value)):value;
+ };
  const range=(rows,r,c,n=1,w=1)=>({
   getValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>rows[r-1+i]?.[c-1+j]??'')),
   getDisplayValues:()=>Array.from({length:n},(_,i)=>Array.from({length:w},(_,j)=>String(rows[r-1+i]?.[c-1+j]??''))),
-  setRichTextValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v.text;});});},
-  setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=v;});});}
+  setRichTextValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=typed(v.text);});});},
+  setValues:values=>{values.forEach((line,i)=>{rows[r-1+i]??=[];line.forEach((v,j)=>{rows[r-1+i][c-1+j]=typed(v);});});}
  });
  const sheet=name=>{if(!sheets.has(name)){const rows=[];sheets.set(name,{rows,getLastRow:()=>rows.length,getLastColumn:()=>rows[0]?.length||0,getRange:(...a)=>range(rows,...a)});}return sheets.get(name);};
- // The photo sheet is absent until the server creates it. Like the real sheet (seen in production on 2026-11-15), it turns text beginning with + or = into a formula error.
+ // The photo sheet is absent until the server creates it.
  // Each access is recorded so tests can prove when storage is touched.
  const db={getSheetByName:name=>{if(name!==photoSheet)return sheet(name);imageRequests.push({options:{method:'get'}});if(imageFailure)throw new Error('private-storage-detail');return sheets.has(name)?sheet(name):null;},
-  insertSheet:name=>{imageRequests.push({options:{method:'post'}});const made=sheet(name),getRange=made.getRange;made.hideSheet=()=>{made.hidden=true;};made.getRange=(...a)=>{const cells=getRange(...a),write=cells.setRichTextValues;cells.setRichTextValues=values=>{imageRequests.push({options:{method:'put'}});write(values.map(line=>line.map(cell=>/^[+=]/.test(cell.text)?{text:'#ERROR!'}:cell)));};return cells;};return made;}};
+  insertSheet:name=>{imageRequests.push({options:{method:'post'}});const made=sheet(name),getRange=made.getRange;made.hideSheet=()=>{made.hidden=true;};made.getRange=(...a)=>{const cells=getRange(...a),write=cells.setRichTextValues;cells.setRichTextValues=values=>{imageRequests.push({options:{method:'put'}});write(values);};return cells;};return made;}};
  const photoRows=()=>(sheets.get(photoSheet)?.rows||[]).filter(row=>row&&row[0]);
  const images={get size(){return photoRows().length;},has:path=>photoRows().some(row=>row[0]===path),get:path=>{const row=photoRows().find(row=>row[0]===path);return row&&{content:row.slice(1).map(cell=>cell.slice(2)).join('')};}};
  const ctx=vm.createContext({Date:TestDate,JSON,URL,console,
@@ -66,6 +74,13 @@ test('large photos are split below the cell limit, stay text and read back uncha
  assert.ok(row.slice(1).every(cell=>typeof cell==='string'&&cell.length<=50000&&!cell.includes('#ERROR!')));assert.ok(base64.slice(49000).startsWith('+'),'this photo has pieces that begin with +');
  assert.equal(b.rpc({action:'photo',token,path:uploaded.path}).base64,base64);assert.equal(b.sheets.get('写真データ').hidden,true);
  assert.equal(b.rpc({action:'upload',token,collection:'makers',base64:'A'.repeat(341340)}).ok,false);assert.equal(b.images.size,1);
+});
+test('saved text beginning with =, + or a zero and text with a leading apostrophe comes back unchanged',()=>{
+ const b=backend();b.setup();const token=b.login(),loaded=b.rpc({action:'load',token}),maker=loaded.data.makers[0];
+ const record={...maker,description:'=SUM(1,2)',tel:'+81-90-1234-5678',postal:'0123',sub:"'quoted"};
+ assert.equal(b.rpc({action:'save',token,collection:'makers',record,revision:loaded.revision}).ok,true);
+ const saved=b.rpc({action:'load',token}).data.makers.find(x=>x.id===maker.id);
+ assert.equal(saved.description,'=SUM(1,2)');assert.equal(saved.tel,'+81-90-1234-5678');assert.equal(saved.postal,'0123');assert.equal(saved.sub,"'quoted");
 });
 test('admin setup is restricted to the Google owner and cannot overwrite an existing password',()=>{
  const b=backend();b.setEmail('');assert.equal(b.setup().ok,false);assert.equal(b.props.has('PASSWORD_HASH'),false);b.setEmail('owner@example.test');assert.equal(b.setup().ok,true);assert.equal(b.setup().ok,false);assert.notEqual(b.props.get('PASSWORD_HASH'),'a'.repeat(64));

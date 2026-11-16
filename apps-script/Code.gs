@@ -73,8 +73,9 @@ function save_(request){
       [record.logo].concat(record.photos).forEach(function(path){if(photoPath_(path)&&previous.indexOf(path)<0&&!checked[path]){photoContent_(path);checked[path]=true;}});
     }
     if(request.collection==='events'&&sheet.getRange(1,9).getDisplayValues()[0][0]==='')sheet.getRange(1,9).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText('photo').build()]]);
-    // Rich text writes preserve strings beginning with '=' as text, never as a spreadsheet formula.
-    sheet.getRange(row,1,1,def.fields.length).setRichTextValues([def.fields.map(function(k){var value=record[k];return SpreadsheetApp.newRichTextValue().setText(value===null?'':typeof value==='object'?JSON.stringify(value):String(value)).build();})]);
+    // A leading apostrophe makes the sheet keep each value exactly as text. Without it the sheet reads text beginning
+    // with = or + as a formula and drops leading zeros, even through rich text writes (measured on the real sheet, 2026-11-16).
+    sheet.getRange(row,1,1,def.fields.length).setValues([def.fields.map(function(k){var value=record[k],text=value===null?'':typeof value==='object'?JSON.stringify(value):String(value);return text===''?'':"'"+text;})]);
     properties_().setProperty('REVISION',String(revision+1));
     return {ok:true,revision:revision+1};
   }finally{lock.releaseLock();}
