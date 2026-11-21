@@ -75,5 +75,16 @@ test('browser uses the public Sheets snapshot and sends one view per page; filte
   assert.equal(await b.evaluate("[...document.querySelectorAll('#ev-list>li')].every(row=>!row.hidden)"),true);
   await click('#exp-list [data-link-target]');
   assert.equal(views.length,6,'failed analytics must not create a fake successful record');
+  assert.equal(await b.evaluate("document.querySelector('#ev-list').children.length"),state.events.filter(x=>!x.sample).length);
+  assert.equal(await b.evaluate("document.querySelectorAll('#experience .note, #events .note').length"),0);
+  state.makers[0].name='公開項目がなくなった造り手';
+  for(const record of [...state.experiences,...state.events])record.sample=true;
+  await b.open(pathToFileURL(join(fixture,'dist/index.html')).href,390,900);
+  await waitFor("document.querySelector('.maker .name').textContent==='公開項目がなくなった造り手'");
+  for(const id of ['experience','events']){
+   assert.equal(await b.evaluate(`document.querySelector('#${id} .note').textContent`),'現在ご案内できる情報を準備中です');
+   assert.equal(await b.evaluate(`document.querySelectorAll('#${id} ul > li').length`),0);
+   assert.equal(await b.evaluate(`Boolean(document.querySelector('header a[href$="#${id}"]'))`),true);
+  }
  }finally{if(b)await b.close();await rm(fixture,{recursive:true,force:true});}
 });

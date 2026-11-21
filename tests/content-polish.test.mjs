@@ -15,10 +15,19 @@ test('every experience booking uses the same label regardless of old saved custo
  assert.equal((section.match(/>予約サイトへ<\/a>/g)||[]).length,data.experiences.length);
  assert.doesNotMatch(section,/>診断を始める<|>参加方法を見る</);assert.ok(labels.every(x=>x==='予約サイトへ'));
 });
-test('draft and trial events stay off the public site while real events have no sample badge',()=>{
- const events=[{...data.events[0],title:'公開する催し',sample:false},{...data.events[1],title:'非公開の試験',sample:true}];
- let html=renderPages(data.makers,[],events).get('index.html');
- assert.ok(html.includes('公開する催し'));assert.ok(!html.includes('非公開の試験'));assert.ok(!html.includes('表示例'));
- html=renderPages(data.makers,[],data.events).get('index.html');
- assert.ok(html.includes('イベント情報は、決まり次第ご案内します。'));assert.ok(!html.includes(data.events[0].title));
+test('public sections hide samples and show the preparation notice only when no entries are public',()=>{
+ const notice='<p class="note">現在ご案内できる情報を準備中です</p>';
+ for(const [collection,id] of [['experiences','experience'],['events','events']]){
+  const sample={...data[collection][0],title:'非公開の表示例',sample:true};
+  const published={...data[collection][1],title:'公開中のお知らせ',sample:false};
+  for(const [records,visible] of [[[sample,published],true],[[sample],false],[[],false]]){
+   const html=renderPages(data.makers,collection==='experiences'?records:[],collection==='events'?records:[]).get('index.html');
+   const section=html.split(`id="${id}"`)[1].split('</section>')[0];
+   const header=html.split('</header>')[0];
+   assert.ok(header.includes(`href="index.html#${id}"`),id);
+   assert.ok(!section.includes(sample.title),id);
+   assert.equal(section.includes(published.title),visible,id);
+   assert.equal(section.split(notice).length-1,visible?0:1,id);
+  }
+ }
 });
