@@ -1,6 +1,6 @@
 # 자동 병합 (공통 운영 방식 v1.3, dev-command에서 옮김)
 # 변경 제안이 올라오면 시험을 돌리고, 통과하면 바로 main에 병합한다.
-# 위험 등급, 등급 없음, 자동 반영 설정이나 저장 구조 파일 변경은 병합하지 않고 자동 병합 보류 표시를 붙인다.
+# 위험 등급은 쓰지 않는다(운영 방식 v2.0). GitHub가 병합을 거절할 때만 자동 병합 보류 표시를 붙인다.
 # 이 파일을 바꾸는 변경 제안은 GitHub 규칙상 자동으로 병합되지 않는다.
 name: 자동 병합
 
@@ -59,8 +59,8 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number || inputs.pr }}
           TESTED_SHA: ${{ needs.test.outputs.sha }}
-          NEED_GRADE: 'true'
-          HOLD_PATHS: '.github/*'
+          NEED_GRADE: 'false'
+          HOLD_PATHS: ''
           DEPLOYS: '*=deploy.yml'
         run: |
           python3 - <<'PY'
@@ -117,8 +117,6 @@ jobs:
           grade = grade_of(pr.get("body"))
           if NEED_GRADE and not grade:
               reasons.append("본문에서 위험 등급을 찾지 못했습니다. 본문에 위험 등급: 일반처럼 적으면 다시 확인합니다.")
-          if grade == "위험":
-              reasons.append("위험 등급입니다. Claude Code 검토 후 사장님이 병합합니다.")
           held = sorted({f for f in files for p in HOLD if fnmatch.fnmatch(f, p)})
           if held:
               reasons.append("자동 반영 설정이나 저장 구조 파일이 바뀌었습니다: " + ", ".join(held[:5]))
