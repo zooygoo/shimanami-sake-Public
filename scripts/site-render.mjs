@@ -43,9 +43,27 @@ const external = (url, label, cls = '', prefix = '', target = '') => `<a${target
 const photo = (path, alt, prefix = '', cls = '') => photoSource(path,prefix) ? `<img${cls ? ` class="${cls}"` : ''} src="${esc(photoSource(path,prefix))}" alt="${esc(alt)}" loading="lazy">` : '';
 const info = (label, value) => value ? `<dt>${label}</dt><dd>${esc(value)}</dd>` : '';
 const booking = (x, prefix = '') => x.booking_label!=='非表示'&&x.booking_url ? external(x.booking_url, '予約サイトへ', 'btn btn-blue btn-sm', prefix, 'experience:'+x.id) : '';
-const navShell = (template, prefix) => template.replaceAll('ASSET', `${prefix}assets/`).replaceAll('href="admin/"', `href="${prefix}admin/"`).replaceAll('href="#', `href="${prefix}index.html#`);
-function page(title, main, prefix = '', script = '', pagePath = '/') {
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${esc(title)} | SHIMANAMIの酒</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap"><link rel="stylesheet" href="${prefix}site.css"></head><body id="top">${navShell(headerTemplate,prefix)}${main}${navShell(footerTemplate,prefix)}${script ? `<script>${script}</script>` : ''}<script type="module" src="${prefix}site-runtime.mjs" data-endpoint="${esc(connection.apps_script_url)}" data-page="${esc(pagePath)}"></script></body></html>`;
+const navShell = (template, prefix) => template.replaceAll('ASSET', () => `${prefix}assets/`).replaceAll('href="admin/"', () => `href="${prefix}admin/"`).replaceAll('href="#', () => `href="${prefix}index.html#`);
+function page(title, description, main, prefix = '', script = '', pagePath = '/') {
+  const siteUrl = connection.site_url;
+  const pageTitle = `${esc(title)} | SHIMANAMIの酒`;
+  const summary = esc(description);
+  const is404 = pagePath === '/404.html';
+  const url = siteUrl ? esc(new URL(pagePath.slice(1),siteUrl).href) : '';
+  const metadata = siteUrl ? `
+<meta name="description" content="${summary}">
+<meta property="og:title" content="${pageTitle}">
+<meta property="og:description" content="${summary}">
+<meta property="og:type" content="website">
+<meta property="og:image" content="${esc(new URL('assets/brand/share-preview.png',siteUrl).href)}">
+<meta property="og:image:alt" content="SHIMANAMIの酒">
+<meta property="og:url" content="${url}">
+<meta name="twitter:card" content="summary_large_image">
+${is404 ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="${url}">`}
+<link rel="icon" href="${prefix}assets/brand/favicon.ico">
+<link rel="apple-touch-icon" href="${prefix}assets/brand/apple-touch-icon.png">` : '';
+  const runtime = is404 ? '' : `<script type="module" src="${prefix}site-runtime.mjs" data-endpoint="${esc(connection.apps_script_url)}" data-page="${esc(pagePath)}"></script>`;
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${pageTitle}</title>${metadata}<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap"><link rel="stylesheet" href="${prefix}site.css"></head><body id="top">${navShell(headerTemplate,prefix)}${main}${navShell(footerTemplate,prefix)}${script ? `<script>${script}</script>` : ''}${runtime}</body></html>`;
 }
 function section(id, headingId, title, content, cls = '', style = '') {
   return `<section class="sec ${cls}" id="${id}" aria-labelledby="${headingId}"${style ? ` style="${style}"` : ''}><div class="wrap"><div class="sec-head"><h2 id="${headingId}">${title}</h2></div>${content}</div></section>`;
@@ -71,13 +89,21 @@ const eventRows = `<ul class="events" id="ev-list">${events.map(x=>{
 }).join('')}</ul>${!events.length?emptyNotice:''}`;
 const browserScript = '('+activateFilters.toString()+')();';
 const home = `<main>${hero}${section('makers','h-makers','造り手',makerCards)}${section('map','h-map','地図',map,'sea-band')}${section('experience','h-exp','体験',experienceRows)}${section('events','h-ev','イベント',eventFilters+eventRows,'','padding-top:0')}</main>`;
-const pages=new Map([['index.html',page('トップ',home,'',browserScript)]]);
+const pages=new Map([['index.html',page('トップ','愛媛県のしまなみ海道・ゆめしま海道のお酒と造り手を紹介します。地図や体験、イベントの情報をご案内します。',home,'',browserScript)]]);
 for (const m of makers) {
   const prefix = '../../';
   const related = experiences.filter(x=>x.maker_id===m.id);
   const photos = (m.photos||[]).filter(path=>photoSource(path,prefix));
   const main = `<main><div class="wrap"><nav class="crumb" aria-label="現在の位置"><a href="${prefix}index.html">トップ</a>　/　<a href="${prefix}index.html#makers">造り手</a>　/　${esc(m.name)}</nav><div class="d-top"><div class="d-id"><h1>${esc(m.name)}</h1><div class="labels"><span>${esc(m.kind)}</span><span>${esc(m.area)}</span></div>${optional(m.sub,'p')}${optional(m.body,'p')}</div>${photoSource(m.logo,prefix)?`<div class="d-brand">${photo(m.logo,`${m.name}のロゴ`,prefix,'d-logo')}</div>`:''}</div>${photos.length ? `<figure class="d-hero" style="margin:0">${photo(photos[0],`${m.name}の醸造所`,prefix)}</figure>` : ''}${photos.length>1 ? `<div class="gallery">${photos.slice(1).map(p=>photo(p,`${m.name}の風景`,prefix)).join('')}</div>` : ''}<div class="d-cols"><section aria-labelledby="h-info"><h2 class="h3" id="h-info">基本情報</h2><dl class="info">${info('住所',m.address?address(m):'')}${m.tel?`<dt>電話</dt><dd><a href="tel:${esc(m.tel)}">${esc(m.tel)}</a></dd>`:''}${info('営業時間',m.hours)}${m.website?`<dt>公式サイト</dt><dd>${external(m.website,new URL(m.website).hostname,'','','maker:'+m.id+':website')}</dd>`:''}${m.sns.length?`<dt>SNS</dt><dd>${m.sns.map((x,i)=>external(x.url,x.name,'','','maker:'+m.id+':sns:'+i)).join(' ')}</dd>`:''}</dl><div class="d-actions">${m.address?external(directions(m),'経路を見る','btn btn-blue','','maker:'+m.id+':directions'):''}${m.website?external(m.website,'公式サイトを開く','btn btn-ghost','','maker:'+m.id+':website'):''}</div></section>${related.length ? `<section aria-labelledby="h-rel"><h2 class="h3" id="h-rel">ここで参加できる体験</h2><ul class="mini">${related.map(x=>`<li><span class="e-kind">${esc(categories[x.category])}</span><b>${esc(x.title)}</b>${booking(x,prefix+'index.html')}</li>`).join('')}</ul></section>` : '<section aria-labelledby="h-rel"><h2 class="h3" id="h-rel">体験について</h2><p class="note">体験情報は、内容が決まり次第ご案内します。</p></section>'}</div></div></main>`;
-  pages.set(`makers/${m.id}/index.html`,page(m.name,main,prefix,'',`/makers/${m.id}/`));
+  const description = m.description || m.sub || `${m.area}の造り手「${m.name}」と、${m.kind}や所在地をご紹介します。`;
+  pages.set(`makers/${m.id}/index.html`,page(m.name,description,main,prefix,'',`/makers/${m.id}/`));
+}
+if (connection.site_url) {
+  const title = 'ページが見つかりません';
+  const description = 'お探しのページは移動したか、削除された可能性があります。';
+  const prefix = esc(connection.site_url);
+  const missing = `<main class="not-found"><section class="sec" aria-labelledby="h-missing"><div class="wrap"><div class="sec-head"><h1 id="h-missing">${title}</h1></div><p>${description}</p><div class="d-actions"><a class="btn btn-blue" href="${prefix}">トップへ戻る</a></div></div></section></main>`;
+  pages.set('404.html',page(title,description,missing,prefix,'','/404.html'));
 }
 return pages;
 }

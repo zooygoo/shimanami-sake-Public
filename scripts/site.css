@@ -254,3 +254,6 @@ body{overflow-wrap:anywhere}
 
 /* Let both bridge cables continue to the outer hero boundary. */
 .hero .wrap{overflow:visible}
+
+.not-found h1{font-size:clamp(28px,3.2vw,38px);font-weight:700;letter-spacing:.04em}
+.not-found .btn:focus-visible{outline-color:var(--blue)}
